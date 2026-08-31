@@ -1,7 +1,4 @@
 # REDJOHN3
---// Target Lock Hub - Dark Charcoal Edition (Anti-Ban Protected)
---// Theme: Slate Dark / Matte Grey with Speed & Protection System
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -12,15 +9,11 @@ local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
--- Safe Parent Detection
 local ContainerParent = gethui and gethui() or (CoreGui:FindFirstChild("RobloxGui") and CoreGui or LocalPlayer:WaitForChild("PlayerGui"))
 if ContainerParent:FindFirstChild("TargetLockHub_Protected") then
     ContainerParent:FindFirstChild("TargetLockHub_Protected"):Destroy()
 end
 
---==================================================
--- DARK & GREY PALETTE
---==================================================
 local BG_Main = Color3.fromRGB(15, 15, 18)
 local BG_Header = Color3.fromRGB(22, 22, 26)
 local Card_BG = Color3.fromRGB(28, 28, 34)
@@ -31,9 +24,6 @@ local Text_Main = Color3.fromRGB(240, 240, 245)
 local Text_Sub = Color3.fromRGB(140, 140, 150)
 local Accent_Status = Color3.fromRGB(200, 200, 210)
 
---==================================================
--- SETTINGS & STATE
---==================================================
 local AimEnabled = true
 local ESPEnabled = true
 local WallCheckEnabled = true
@@ -58,29 +48,14 @@ local CurrentTargetPart = nil
 local IsMinimized = false
 local LastShotTime = 0
 
---==================================================
--- ANTI-BAN METATABLE HOOK (Client Protection)
---==================================================
 pcall(function()
     local rawMetatable = getrawmetatable(game)
     local oldIndex = rawMetatable.__index
     local oldNamecall = rawMetatable.__namecall
     setreadonly(rawMetatable, false)
 
-    -- ซ่อนค่า WalkSpeed ที่ผิดปกติจากการถูกสแกน
-    rawMetatable.__index = newcclosure(function(self, key)
-        if not checkcaller() and self:IsA("Humanoid") and key == "WalkSpeed" then
-            return 16
-        end
-        return oldIndex(self, key)
-    end)
-
-    setreadonly(rawMetatable, true)
 end)
 
---==================================================
--- GUI CREATION
---==================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "TargetLockHub_Protected"
 ScreenGui.ResetOnSpawn = false
@@ -90,7 +65,6 @@ local ESPFolder = Instance.new("Folder")
 ESPFolder.Name = "ESPHolder"
 ESPFolder.Parent = ScreenGui
 
--- Main Container
 local Main = Instance.new("Frame")
 Main.Size = UDim2.fromOffset(290, 500)
 Main.Position = UDim2.new(0.5, -145, 0.5, -250)
@@ -110,7 +84,6 @@ MainStroke.Color = Stroke_Color
 MainStroke.Transparency = 0.2
 MainStroke.Parent = Main
 
--- Drag Engine
 local dragging, dragInput, dragStart, startPos
 local function updateDrag(input)
     local delta = input.Position - dragStart
@@ -138,7 +111,6 @@ UserInputService.InputChanged:Connect(function(input)
     if input == dragInput and dragging then updateDrag(input) end
 end)
 
--- Top Header
 local Header = Instance.new("Frame")
 Header.Size = UDim2.new(1, 0, 0, 42)
 Header.BackgroundColor3 = BG_Header
@@ -160,7 +132,6 @@ Title.Font = Enum.Font.GothamBold
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
--- ปุ่มย่อส่วน (-)
 local Minimize = Instance.new("TextButton")
 Minimize.Size = UDim2.fromOffset(26, 26)
 Minimize.Position = UDim2.new(1, -60, 0.5, -13)
@@ -172,7 +143,6 @@ Minimize.Font = Enum.Font.GothamBold
 Minimize.Parent = Header
 Instance.new("UICorner", Minimize).CornerRadius = UDim.new(0, 6)
 
--- ปุ่มปิด (X)
 local Close = Instance.new("TextButton")
 Close.Size = UDim2.fromOffset(26, 26)
 Close.Position = UDim2.new(1, -30, 0.5, -13)
@@ -184,7 +154,6 @@ Close.Font = Enum.Font.GothamBold
 Close.Parent = Header
 Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 6)
 
--- Content Area
 local Content = Instance.new("Frame")
 Content.Size = UDim2.new(1, -24, 1, -54)
 Content.Position = UDim2.fromOffset(12, 48)
@@ -196,7 +165,6 @@ Layout.SortOrder = Enum.SortOrder.LayoutOrder
 Layout.Padding = UDim.new(0, 7)
 Layout.Parent = Content
 
--- Helper: Create Dark Button
 local function CreateButton(text, active, order, parentFrame)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, 0, 0, 34)
@@ -207,13 +175,11 @@ local function CreateButton(text, active, order, parentFrame)
     btn.Font = Enum.Font.GothamBold
     btn.LayoutOrder = order
     btn.Parent = parentFrame or Content
-    
-    local stroke = Instance.new("UIStroke")
+        local stroke = Instance.new("UIStroke")
     stroke.Thickness = 1
     stroke.Color = Stroke_Color
     stroke.Transparency = 0.5
     stroke.Parent = btn
-
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     return btn
 end
@@ -225,7 +191,6 @@ local PredictBtn = CreateButton("Prediction: ON", true, 4)
 local AutoShootBtn = CreateButton("Auto Shoot: OFF", false, 5)
 local TargetModeBtn = CreateButton("Target Part: Hybrid", true, 6)
 
--- Speed Controls UI Block
 local SpeedToggleBtn = CreateButton("Speed System: OFF", false, 7)
 
 local SpeedAdjustFrame = Instance.new("Frame")
@@ -266,7 +231,6 @@ SpeedPlusBtn.Font = Enum.Font.GothamBold
 SpeedPlusBtn.Parent = SpeedAdjustFrame
 Instance.new("UICorner", SpeedPlusBtn).CornerRadius = UDim.new(0, 6)
 
--- Status Bar
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, 0, 0, 32)
 StatusLabel.BackgroundColor3 = BG_Header
@@ -283,7 +247,6 @@ StatusStroke.Thickness = 1
 StatusStroke.Color = Stroke_Color
 StatusStroke.Parent = StatusLabel
 
--- Minimal Dark FOV Circle
 local FOVCircle = Instance.new("Frame")
 FOVCircle.Size = UDim2.fromOffset(FOV * 2, FOV * 2)
 FOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -298,9 +261,6 @@ FOVStroke.Transparency = 0.6
 FOVStroke.Parent = FOVCircle
 Instance.new("UICorner", FOVCircle).CornerRadius = UDim.new(1, 0)
 
---==================================================
--- ESP SYSTEM
---==================================================
 local function RemoveESP(player)
     local hl = ESPFolder:FindFirstChild("HL_" .. player.Name)
     if hl then hl:Destroy() end
@@ -315,8 +275,7 @@ local function UpdateESP()
             local head = char:FindFirstChild("Head")
             local hum = char:FindFirstChildOfClass("Humanoid")
             local root = char:FindFirstChild("HumanoidRootPart")
-
-            if ESPEnabled and head and hum and root and hum.Health > 0 then
+        if ESPEnabled and head and hum and root and hum.Health > 0 then
                 local hl = ESPFolder:FindFirstChild("HL_" .. player.Name) or Instance.new("Highlight")
                 hl.Name = "HL_" .. player.Name
                 hl.Adornee = char
@@ -327,8 +286,7 @@ local function UpdateESP()
                 hl.OutlineTransparency = 0.5
                 hl.Enabled = true
                 hl.Parent = ESPFolder
-
-                local bb = ESPFolder:FindFirstChild("BB_" .. player.Name) or Instance.new("BillboardGui")
+     local bb = ESPFolder:FindFirstChild("BB_" .. player.Name) or Instance.new("BillboardGui")
                 bb.Name = "BB_" .. player.Name
                 bb.Adornee = head
                 bb.Size = UDim2.fromOffset(120, 30)
@@ -336,8 +294,7 @@ local function UpdateESP()
                 bb.AlwaysOnTop = true
                 bb.Enabled = true
                 bb.Parent = ESPFolder
-
-                local txt = bb:FindFirstChild("T") or Instance.new("TextLabel")
+     local txt = bb:FindFirstChild("T") or Instance.new("TextLabel")
                 txt.Name = "T"
                 txt.Size = UDim2.new(1, 0, 1, 0)
                 txt.BackgroundTransparency = 1
@@ -345,8 +302,7 @@ local function UpdateESP()
                 txt.TextStrokeTransparency = 0.4
                 txt.TextSize = 11
                 txt.Font = Enum.Font.GothamBold
-
-                local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+     local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                 local dist = myRoot and math.floor((myRoot.Position - root.Position).Magnitude) or 0
                 txt.Text = player.DisplayName .. " [" .. dist .. "m]"
                 txt.Parent = bb
@@ -357,16 +313,13 @@ local function UpdateESP()
     end
 end
 
---==================================================
--- AIM LOGIC (Safe & Humanized)
---==================================================
 local function IsVisible(targetPart)
     if not WallCheckEnabled then return true end
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
     rayParams.FilterDescendantsInstances = { LocalPlayer.Character, targetPart.Parent }
 
-    local hit = workspace:Raycast(Camera.CFrame.Position, targetPart.Position - Camera.CFrame.Position, rayParams)
+  local hit = workspace:Raycast(Camera.CFrame.Position, targetPart.Position - Camera.CFrame.Position, rayParams)
     return hit == nil
 end
 
@@ -374,7 +327,6 @@ local function GetTargetPart(char)
     if not char then return nil end
     local head = char:FindFirstChild("Head")
     local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-
     if TargetMode == "Head" then return head or torso end
     if TargetMode == "Body" then return torso or head end
     return (math.random() <= 0.35) and (head or torso) or (torso or head)
@@ -391,8 +343,8 @@ local function GetTargetPosition(part)
             pos = pos + (vel * (dist / BulletSpeed))
         end
     end
-    -- Humanized Random Offset (ป้องกันการเล็งพิกัดตรงเป๊ะ 100% ตลอดเวลา)
-    local jitter = Vector3.new((math.random() - 0.5) * 0.1, (math.random() - 0.5) * 0.1, (math.random() - 0.5) * 0.1)
+    
+   local jitter = Vector3.new((math.random() - 0.5) * 0.1, (math.random() - 0.5) * 0.1, (math.random() - 0.5) * 0.1)
     return pos + jitter
 end
 
@@ -400,7 +352,6 @@ local function GetClosestPlayer()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     local closestPlayer, closestPart = nil, nil
     local minDistance = FOV
-
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local char = player.Character
@@ -425,50 +376,39 @@ local function GetClosestPlayer()
     return closestPlayer, closestPart
 end
 
---==================================================
--- MAIN LOOP (Heartbeat with Anti-Ban Logic)
---==================================================
 RunService.Heartbeat:Connect(function()
     UpdateESP()
-
-    -- Safe Speed System (Anti-Velocity Freeze detection)
     if SpeedEnabled and LocalPlayer.Character then
         local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         local root = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-
         if hum and root and hum.MoveDirection.Magnitude > 0 then
-            -- สุ่ม Jitter ความเร็วเล็กน้อยเพื่อขัดขวางการตรวจจับค่าคงที่
-            local speedJitter = SpeedValue + (math.random(-15, 15) * 0.1)
+         
+   local speedJitter = SpeedValue + (math.random(-15, 15) * 0.1)
             local currentVel = root.AssemblyLinearVelocity
             local newVel = hum.MoveDirection * speedJitter
             root.AssemblyLinearVelocity = Vector3.new(newVel.X, currentVel.Y, newVel.Z)
         end
     end
 
-    FOVCircle.Size = UDim2.fromOffset(FOV * 2, FOV * 2)
+ FOVCircle.Size = UDim2.fromOffset(FOV * 2, FOV * 2)
     FOVCircle.Visible = AimEnabled
 
-    if not AimEnabled then
+  if not AimEnabled then
         StatusLabel.Text = "Status: Disabled"
         StatusLabel.TextColor3 = Text_Sub
         CurrentTarget = nil
         return
     end
 
-    CurrentTarget, CurrentTargetPart = GetClosestPlayer()
+   CurrentTarget, CurrentTargetPart = GetClosestPlayer()
 
-    if CurrentTarget and CurrentTargetPart then
+  if CurrentTarget and CurrentTargetPart then
         StatusLabel.Text = "Locked: " .. CurrentTarget.DisplayName
         StatusLabel.TextColor3 = Accent_Status
-
-        local targetPos = GetTargetPosition(CurrentTargetPart)
-        local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
-
-        -- Humanized Aim Lerping (สุ่มค่าความสมูทเพื่อความเนียน)
+    local targetPos = GetTargetPosition(CurrentTargetPart)  
+    local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
         local safeSmoothness = SnapLockMode and (0.35 + (math.random() * 0.05)) or (BaseSmoothness + (math.random() * 0.03))
         Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, safeSmoothness)
-
-        -- Humanized Auto Shoot (ป้องกัน Auto Clicker Ban)
         if AutoShootEnabled then
             local currentTime = tick()
             local randomDelay = 0.08 + (math.random() * 0.06) -- สุ่มหน่วงเวลารอบการยิง
@@ -486,9 +426,6 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
---==================================================
--- BUTTON EVENTS
---==================================================
 local function ToggleState(btn, state, label)
     btn.BackgroundColor3 = state and Card_Active or Card_BG
     btn.TextColor3 = state and Text_Main or Text_Sub
@@ -552,7 +489,7 @@ Minimize.MouseButton1Click:Connect(function()
     IsMinimized = not IsMinimized
     Content.Visible = not IsMinimized
     
-    TweenService:Create(Main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+TweenService:Create(Main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
         Size = IsMinimized and UDim2.fromOffset(290, 42) or UDim2.fromOffset(290, 500)
     }):Play()
 end)
