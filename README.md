@@ -29,10 +29,14 @@ end
 local DefaultConfig = {
     AimEnabled = true,
     BotLockEnabled = true,
-    WallCheckEnabled = true,
+    WallCheckEnabled = false,
     PredictionEnabled = true,
     AutoShootEnabled = false,
-    AimOnRightClick = false,
+    AutoHoldShootEnabled = true, -- เปิดใช้งานคลิกขวาค้างยิงออโต้เป็นค่าเริ่มต้น
+    AimOnRightClick = true,
+    NoRecoilEnabled = true,
+    FireRateEnabled = true,
+    FireRateMultiplier = 10.0,
     ToggleKeybindName = "RightShift",
     
     PlayerESPEnabled = true,
@@ -43,8 +47,8 @@ local DefaultConfig = {
     FullBrightEnabled = false,
     ShowFOVCircle = true,
     
-    FOV = 160,
-    Smoothness = 0.045,
+    FOV = 800,
+    Smoothness = 0.0,
     PlayerESPDistance = 5000,
     BotESPDistance = 2000,
     ItemBoxESPDistance = 1500,
@@ -486,9 +490,9 @@ local Title = Instance.new("TextLabel", Header)
 Title.Size = UDim2.new(1, -260, 1, 0)
 Title.Position = UDim2.fromOffset(24, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "REDJOHN_HUB"
+Title.Text = "REDJOHN_HUB (Hold Right-Click Auto Shoot)"
 Title.TextColor3 = Text_Main
-Title.TextSize = 20
+Title.TextSize = 17
 Title.Font = Enum.Font.GothamBold
 Title.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -651,13 +655,13 @@ local function CreateSlider(title, minVal, maxVal, idKey, isFloat, parent, callb
         val = math.clamp(val, minVal, maxVal)
         local pos = (val - minVal) / (maxVal - minVal)
         sliderFill.Size = UDim2.new(pos, 0, 1, 0)
-        label.Text = isFloat and (title .. ": " .. string.format("%.3f", val)) or (title .. ": " .. math.floor(val))
+        label.Text = isFloat and (title .. ": " .. string.format("%.1fx", val)) or (title .. ": " .. math.floor(val))
     end
 
     local draggingSlider = false
     local function updateValue(input)
         local pos = math.clamp((input.Position.X - sliderBar.AbsolutePosition.X) / sliderBar.AbsoluteSize.X, 0, 1)
-        local val = isFloat and tonumber(string.format("%.3f", minVal + ((maxVal - minVal) * pos))) or math.floor(minVal + ((maxVal - minVal) * pos))
+        local val = isFloat and tonumber(string.format("%.1f", minVal + ((maxVal - minVal) * pos))) or math.floor(minVal + ((maxVal - minVal) * pos))
         Config[idKey] = val
         SetValue(val)
         if callback then callback(val) end
@@ -684,15 +688,19 @@ local function CreateSlider(title, minVal, maxVal, idKey, isFloat, parent, callb
     SetValue(Config[idKey])
 end
 
-CreateToggle("Aimlock (Player)", "AimEnabled", LeftCol)
-CreateToggle("Bot Auto-Lock Head", "BotLockEnabled", LeftCol)
+CreateToggle("Aimlock (Player 100%)", "AimEnabled", LeftCol)
+CreateToggle("Bot Headlock (100%)", "BotLockEnabled", LeftCol)
 CreateToggle("Aim Only on Right Click", "AimOnRightClick", LeftCol)
-CreateToggle("Wall Check", "WallCheckEnabled", LeftCol)
+CreateToggle("Hold Right-Click Auto Shoot", "AutoHoldShootEnabled", LeftCol) -- ฟังก์ชันใหม่ คลิกขวาค้างยิงออโต้
+CreateToggle("Wall Check (Off = Through Walls)", "WallCheckEnabled", LeftCol)
 CreateToggle("Prediction", "PredictionEnabled", LeftCol)
-CreateToggle("Auto Shoot", "AutoShootEnabled", LeftCol)
+CreateToggle("Auto Shoot (General)", "AutoShootEnabled", LeftCol)
+CreateToggle("No Recoil", "NoRecoilEnabled", LeftCol)
+CreateToggle("Fire Rate Booster (Ultra)", "FireRateEnabled", LeftCol)
+CreateSlider("Fire Rate Multiplier", 1.0, 10.0, "FireRateMultiplier", true, LeftCol)
 CreateToggle("Show FOV Circle", "ShowFOVCircle", LeftCol)
-CreateSlider("FOV Radius", 30, 400, "FOV", false, LeftCol)
-CreateSlider("Aim Smoothness", 0.005, 0.2, "Smoothness", true, LeftCol)
+CreateSlider("FOV Radius", 50, 800, "FOV", false, LeftCol)
+CreateSlider("Aim Smoothness (0 = Instant)", 0.0, 0.1, "Smoothness", true, LeftCol)
 
 CreateToggle("Player 3D ESP", "PlayerESPEnabled", RightCol)
 CreateSlider("Player Distance", 100, 5000, "PlayerESPDistance", false, RightCol)
@@ -782,6 +790,22 @@ end)
 
 RefreshUI()
 
+task.spawn(function()
+    pcall(function()
+        local mt = getrawmetatable(game)
+        setreadonly(mt, false)
+        local oldIndex = mt.__index
+        
+        mt.__index = newcclosure(function(self, k)
+            if Config.NoRecoilEnabled and (k == "Recoil" or k == "CameraRecoil" or k == "Spread" or k == "Kickback") then
+                return 0
+            end
+            return oldIndex(self, k)
+        end)
+        setreadonly(mt, true)
+    end)
+end)
+
 local IsRunning = true
 local Connection
 
@@ -797,6 +821,40 @@ Connection = RunService.RenderStepped:Connect(function()
     FOVCircle.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
     FOVCircle.Position = UDim2.fromOffset(mousePos.X, mousePos.Y)
     FOVCircle.Visible = Config.ShowFOVCircle
+
+    if Config.NoRecoilEnabled and LocalPlayer.Character then
+        local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        if tool then
+            for _, v in ipairs(tool:GetDescendants()) do
+                if v:IsA("NumberValue") or v:IsA("IntValue") then
+                    local vName = v.Name:lower()
+                    if vName:find("recoil") or vName:find("spread") or vName:find("kick") then
+                        v.Value = 0
+                    end
+                end
+            end
+        end
+    end
+
+    if Config.FireRateEnabled and LocalPlayer.Character then
+        local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        if tool then
+            for _, v in ipairs(tool:GetDescendants()) do
+                if v:IsA("NumberValue") or v:IsA("IntValue") then
+                    local vName = v.Name:lower()
+                    if vName:find("firerate") or vName:find("cooldown") or vName:find("delay") or vName:find("rpm") or vName:find("fire") or vName:find("rate") then
+                        if v.Value > 0 then
+                            if vName:find("rpm") or (vName:find("rate") and not vName:find("cooldown")) then
+                                v.Value = v.Value * Config.FireRateMultiplier
+                            else
+                                v.Value = math.max(0.001, v.Value / Config.FireRateMultiplier)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 
     if Config.PlayerESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -881,12 +939,17 @@ Connection = RunService.RenderStepped:Connect(function()
                 targetPos = targetPos + (targetHead.AssemblyLinearVelocity * 0.035)
             end
             
-            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(camPos, targetPos), Config.Smoothness)
+            if Config.Smoothness <= 0.001 then
+                Camera.CFrame = CFrame.new(camPos, targetPos)
+            else
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(camPos, targetPos), Config.Smoothness)
+            end
             
-            if Config.AutoShootEnabled and mouse1press then
+            -- ระบบยิงออโต้ (รวมถึงคลิกขวาค้างแล้วยิงออโต้)
+            if (Config.AutoShootEnabled or (Config.AutoHoldShootEnabled and IsRightMouseDown)) and mouse1press then
                 pcall(function()
                     mouse1press()
-                    task.delay(0.05, function() if mouse1release then mouse1release() end end)
+                    task.delay(0.01, function() if mouse1release then mouse1release() end end)
                 end)
             end
         end
