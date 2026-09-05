@@ -703,19 +703,19 @@ CreateSlider("FOV Radius", 50, 800, "FOV", false, LeftCol)
 CreateSlider("Aim Smoothness (0 = Instant)", 0.0, 0.1, "Smoothness", true, LeftCol)
 
 CreateToggle("Player 3D ESP", "PlayerESPEnabled", RightCol)
-CreateSlider("Player Distance", 100, 5000, "PlayerESPDistance", false, RightCol)
+CreateSlider("Player Distance", 100, 10000, "PlayerESPDistance", false, RightCol)
 
 CreateToggle("Bot 3D ESP", "BotESPEnabled", RightCol)
-CreateSlider("Bot Distance", 100, 3000, "BotESPDistance", false, RightCol)
+CreateSlider("Bot Distance", 100, 10000, "BotESPDistance", false, RightCol)
 
 CreateToggle("Item & Box ESP", "ItemBoxESPEnabled", RightCol)
 CreateSlider("Item & Box Distance", 50, 3000, "ItemBoxESPDistance", false, RightCol)
 
 CreateToggle("Safezone / Extract ESP", "ExitESPEnabled", RightCol)
-CreateSlider("Safezone Distance", 100, 5000, "ExitESPDistance", false, RightCol)
+CreateSlider("Safezone Distance", 100, 10000, "ExitESPDistance", false, RightCol)
 
 CreateToggle("Corpse ESP", "CorpseESPEnabled", RightCol)
-CreateSlider("Corpse Distance", 50, 3000, "CorpseESPDistance", false, RightCol)
+CreateSlider("Corpse Distance", 50, 10000, "CorpseESPDistance", false, RightCol)
 
 CreateToggle("Full Bright", "FullBrightEnabled", RightCol, function(v) 
     ApplyFullBright(v)
