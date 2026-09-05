@@ -49,11 +49,11 @@ local DefaultConfig = {
     
     FOV = 800,
     Smoothness = 0.0,
-    PlayerESPDistance = 5000,
-    BotESPDistance = 2000,
-    ItemBoxESPDistance = 1500,
-    ExitESPDistance = 5000,
-    CorpseESPDistance = 2000
+    PlayerESPDistance = 10000,
+    BotESPDistance = 10000,
+    ItemBoxESPDistance = 10000,
+    ExitESPDistance = 10000,
+    CorpseESPDistance = 10000
 }
 
 local Config = {}
