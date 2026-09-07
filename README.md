@@ -31,12 +31,11 @@ local DefaultConfig = {
     BotLockEnabled = true,
     WallCheckEnabled = false,
     PredictionEnabled = true,
-    AutoShootEnabled = false,
-    AutoHoldShootEnabled = true, -- เปิดใช้งานคลิกขวาค้างยิงออโต้เป็นค่าเริ่มต้น
-    AimOnRightClick = true,
+    AimSmoothness = 0.2,
+    
     NoRecoilEnabled = true,
-    FireRateEnabled = true,
-    FireRateMultiplier = 10.0,
+    FireRateEnabled = false,
+    FireRateMultiplier = 1.5,
     ToggleKeybindName = "RightShift",
     
     PlayerESPEnabled = true,
@@ -45,24 +44,25 @@ local DefaultConfig = {
     ExitESPEnabled = true,
     CorpseESPEnabled = true,
     FullBrightEnabled = false,
+    FullBrightIntensity = 3.0,
     ShowFOVCircle = true,
     
-    FOV = 800,
-    Smoothness = 0.0,
-    PlayerESPDistance = 10000,
-    BotESPDistance = 10000,
-    ItemBoxESPDistance = 10000,
-    ExitESPDistance = 10000,
-    CorpseESPDistance = 10000
+    FOV = 300,
+    PlayerESPDistance = 5000,
+    BotESPDistance = 5000,
+    ItemBoxESPDistance = 5000,
+    ExitESPDistance = 5000,
+    CorpseESPDistance = 5000
 }
 
 local Config = {}
 for k, v in pairs(DefaultConfig) do Config[k] = v end
 
 local ConfigFileName = "REDJOHN_HUB_Config.json"
-local IsMinimized = false
 local UI_Elements = { Toggles = {}, Sliders = {} }
 local KeybindButtonRef = nil
+
+local Connections = {}
 
 local OriginalLighting = {
     Brightness = Lighting.Brightness,
@@ -79,6 +79,9 @@ local TargetCache = {
     Exits = {},
     Corpses = {}
 }
+
+local PlayerDataCache = {}
+local ESPCache = {}
 
 local function SaveConfig()
     pcall(function()
@@ -122,7 +125,9 @@ local function DeleteConfig()
             delfile(ConfigFileName)
         end
     end)
-    for k, v in pairs(DefaultConfig) do Config[k] = v end
+    for k, v in pairs(DefaultConfig) do 
+        Config[k] = v 
+    end
     ToggleKeybind = Enum.KeyCode.RightShift
     if KeybindButtonRef then
         KeybindButtonRef.Text = "Key: " .. tostring(ToggleKeybind.Name)
@@ -131,10 +136,10 @@ end
 
 LoadConfig()
 
-local function ApplyFullBright(enabled)
+local function ApplyFullBright()
     pcall(function()
-        if enabled then
-            Lighting.Brightness = 2
+        if Config.FullBrightEnabled then
+            Lighting.Brightness = Config.FullBrightIntensity
             Lighting.ClockTime = 14
             Lighting.FogEnd = 1000000
             Lighting.GlobalShadows = false
@@ -151,11 +156,11 @@ local function ApplyFullBright(enabled)
     end)
 end
 
-Lighting.Changed:Connect(function()
+table.insert(Connections, Lighting.Changed:Connect(function()
     if Config.FullBrightEnabled then
-        ApplyFullBright(true)
+        ApplyFullBright()
     end
-end)
+end))
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "REDJOHN_HUB"
@@ -183,7 +188,7 @@ local function GetMainPart(model)
 end
 
 local function GetItemName(obj)
-    if not obj then return "Unknown" end
+    if not obj then return "None" end
     if obj:FindFirstChild("ItemName") and obj.ItemName:IsA("StringValue") then
         return obj.ItemName.Value
     elseif obj:GetAttribute("ItemName") then
@@ -199,81 +204,150 @@ local function GetItemName(obj)
     return obj.Name
 end
 
+-- ดึงชื่อไอเทมจาก Slot HELMET / CHESTRIG ตรงตามโครงสร้างในรูป
+local function GetEquipmentNameFromSlot(container, slotName)
+    for _, desc in ipairs(container:GetDescendants()) do
+        if desc.Name:upper() == slotName then
+            -- ลองหาจาก ItemInside / Value / Child
+            local val = desc:FindFirstChildOfClass("StringValue") or desc:FindFirstChild("ItemName")
+            if val and val:IsA("StringValue") and val.Value ~= "" then
+                return val.Value
+            end
+            
+            local childItem = desc:FindFirstChildOfClass("Model") or desc:FindFirstChildOfClass("Tool") or desc:FindFirstChildOfClass("Folder")
+            if childItem then
+                return GetItemName(childItem)
+            end
+
+            if desc:GetAttribute("ItemName") then
+                return tostring(desc:GetAttribute("ItemName"))
+            elseif desc:GetAttribute("Equipped") then
+                return tostring(desc:GetAttribute("Equipped"))
+            end
+        end
+    end
+    return nil
+end
+
+local function UpdatePlayerCache(player)
+    if not player then 
+        PlayerDataCache[player] = nil
+        return 
+    end
+    
+    local helmetName = "None"
+    local chestRigName = "None"
+    local weaponName = "None"
+    local char = player.Character
+
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then weaponName = tool.Name end
+    end
+
+    local searchContainers = {}
+    if char then table.insert(searchContainers, char) end
+    table.insert(searchContainers, player)
+
+    for _, container in ipairs(searchContainers) do
+        -- สแกนช่อง HELMET
+        local h = GetEquipmentNameFromSlot(container, "HELMET")
+        if h then helmetName = h end
+        
+        -- สแกนช่อง CHESTRIG
+        local c = GetEquipmentNameFromSlot(container, "CHESTRIG")
+        if c then chestRigName = c end
+    end
+
+    PlayerDataCache[player] = {
+        Equipment = string.format("H: %s | C: %s", helmetName, chestRigName),
+        Weapon = weaponName
+    }
+end
+
+local function SetupPlayerCacheListener(player)
+    local function onCharacterAdded(char)
+        UpdatePlayerCache(player)
+        table.insert(Connections, char.ChildAdded:Connect(function() task.defer(function() UpdatePlayerCache(player) end) end))
+        table.insert(Connections, char.ChildRemoved:Connect(function() task.defer(function() UpdatePlayerCache(player) end) end))
+    end
+
+    if player.Character then onCharacterAdded(player.Character) end
+    table.insert(Connections, player.CharacterAdded:Connect(onCharacterAdded))
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do SetupPlayerCacheListener(plr) end
+table.insert(Connections, Players.PlayerAdded:Connect(SetupPlayerCacheListener))
+table.insert(Connections, Players.PlayerRemoving:Connect(function(plr) PlayerDataCache[plr] = nil end))
+
 local function Apply3DESP(model, color)
     if not model then return nil end
     
-    local highlight = model:FindFirstChild("REDJOHN_3DHighlight")
-    if not highlight then
-        highlight = Instance.new("Highlight")
+    local data = ESPCache[model]
+    if not data then
+        local highlight = Instance.new("Highlight")
         highlight.Name = "REDJOHN_3DHighlight"
         highlight.Adornee = model
         highlight.FillTransparency = 0.6
         highlight.OutlineTransparency = 0.1
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.Parent = model
-    end
-    highlight.Enabled = true
-    highlight.FillColor = color
-    highlight.OutlineColor = color
 
-    local mainPart = GetMainPart(model)
-    if mainPart then
-        local bb = mainPart:FindFirstChild("REDJOHN_3DTag")
-        if not bb then
+        local mainPart = GetMainPart(model)
+        local tagText = nil
+        local bb = nil
+
+        if mainPart then
             bb = Instance.new("BillboardGui")
             bb.Name = "REDJOHN_3DTag"
-            bb.Size = UDim2.fromOffset(150, 30)
-            bb.StudsOffset = Vector3.new(0, 2.5, 0)
+            bb.Size = UDim2.fromOffset(250, 60)
+            bb.StudsOffset = Vector3.new(0, 3, 0)
             bb.AlwaysOnTop = true
 
-            local txt = Instance.new("TextLabel", bb)
-            txt.Name = "TagText"
-            txt.Size = UDim2.new(1, 0, 1, 0)
-            txt.BackgroundTransparency = 1
-            txt.TextStrokeTransparency = 0.4
-            txt.TextSize = 13
-            txt.Font = Enum.Font.GothamBold
+            tagText = Instance.new("TextLabel", bb)
+            tagText.Name = "TagText"
+            tagText.Size = UDim2.new(1, 0, 1, 0)
+            tagText.BackgroundTransparency = 1
+            tagText.TextStrokeTransparency = 0.3
+            tagText.TextSize = 12
+            tagText.Font = Enum.Font.GothamBold
             bb.Parent = mainPart
         end
-        bb.Enabled = true
-        if bb and bb:FindFirstChild("TagText") then
-            bb.TagText.TextColor3 = color
-            return bb.TagText
-        end
+
+        data = { Highlight = highlight, Billboard = bb, TagText = tagText }
+        ESPCache[model] = data
+        
+        table.insert(Connections, model.Destroying:Connect(function()
+            ESPCache[model] = nil
+        end))
     end
-    return nil
+
+    data.Highlight.Enabled = true
+    data.Highlight.FillColor = color
+    data.Highlight.OutlineColor = color
+
+    if data.Billboard then
+        data.Billboard.Enabled = true
+        data.TagText.TextColor3 = color
+    end
+
+    return data.TagText
 end
 
 local function Disable3DESP(model)
-    if not model then return end
-    local highlight = model:FindFirstChild("REDJOHN_3DHighlight")
-    if highlight then highlight.Enabled = false end
-    local mainPart = GetMainPart(model)
-    if mainPart then
-        local bb = mainPart:FindFirstChild("REDJOHN_3DTag")
-        if bb then bb.Enabled = false end
+    local data = ESPCache[model]
+    if data then
+        if data.Highlight then data.Highlight.Enabled = false end
+        if data.Billboard then data.Billboard.Enabled = false end
     end
 end
 
-local function Remove3DESP(model)
-    if not model then return end
-    if model:FindFirstChild("REDJOHN_3DHighlight") then 
-        model.REDJOHN_3DHighlight:Destroy() 
+local function DestroyAllESP()
+    for model, data in pairs(ESPCache) do
+        if data.Highlight then data.Highlight:Destroy() end
+        if data.Billboard then data.Billboard:Destroy() end
     end
-    local mainPart = GetMainPart(model)
-    if mainPart and mainPart:FindFirstChild("REDJOHN_3DTag") then 
-        mainPart.REDJOHN_3DTag:Destroy() 
-    end
-end
-
-local function CleanAllESP()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Character then Remove3DESP(plr.Character) end
-    end
-    for _, bot in ipairs(TargetCache.Bots) do Remove3DESP(bot) end
-    for _, obj in ipairs(TargetCache.ItemBoxes) do Remove3DESP(obj) end
-    for _, obj in ipairs(TargetCache.Exits) do Remove3DESP(obj) end
-    for _, obj in ipairs(TargetCache.Corpses) do Remove3DESP(obj) end
+    table.clear(ESPCache)
 end
 
 local function IsItemOnPlayer(obj)
@@ -289,24 +363,22 @@ local function ClassifyAndAddObject(obj)
     if not obj or IsItemOnPlayer(obj) then return end
     local name = obj.Name:lower()
     local isDoor = name:find("door") or name:find("gate") or name:find("entrance")
+    local isProp = name:find("water") or name:find("bottle") or name:find("box") or name:find("crate") or name:find("container") or name:find("loot")
 
-    if (obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")) then
+    if (obj:IsA("Model") or obj:IsA("BasePart")) then
         local hum = obj:FindFirstChildOfClass("Humanoid")
         local plr = Players:GetPlayerFromCharacter(obj)
 
-        if hum and not plr then
+        if hum and not plr and not isProp then
             if hum.Health > 0 then
                 table.insert(TargetCache.Bots, obj)
             else
                 table.insert(TargetCache.Corpses, obj)
             end
         elseif not hum and not plr then
-            if (name:find("bot") or name:find("npc") or name:find("enemy") or name:find("mob") or name:find("zombie") or name:find("guard")) and not isDoor then
-                table.insert(TargetCache.Bots, obj)
-            elseif obj:IsA("Tool") or name:find("item") or name:find("drop") or name:find("loot") or name:find("pickup") 
-                or name:find("box") or name:find("crate") or name:find("chest") or name:find("container") or name:find("pack") or name:find("ammo") or name:find("weapon") then
+            if isProp or obj:IsA("Tool") or name:find("item") or name:find("drop") or name:find("pickup") or name:find("ammo") or name:find("weapon") then
                 table.insert(TargetCache.ItemBoxes, obj)
-            elseif not isDoor and (name:find("safezone") or name:find("safe_zone") or name:find("evac") or name:find("extract") or name:find("return_base") or name:find("spawnzone")) then
+            elseif not isDoor and (name:find("safezone") or name:find("evac") or name:find("extract") or name:find("spawnzone")) then
                 table.insert(TargetCache.Exits, obj)
             end
         end
@@ -326,17 +398,11 @@ end
 
 InitialScan()
 
-workspace.DescendantAdded:Connect(function(child)
+table.insert(Connections, workspace.DescendantAdded:Connect(function(child)
     ClassifyAndAddObject(child)
-end)
+end))
 
-local IsRightMouseDown = false
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
-        IsRightMouseDown = true
-    end
-    
+table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if isListeningForKey then
         if input.UserInputType == Enum.UserInputType.Keyboard then
             ToggleKeybind = input.KeyCode
@@ -352,13 +418,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if input.KeyCode == ToggleKeybind then
         ScreenGui.Enabled = not ScreenGui.Enabled
     end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
-        IsRightMouseDown = false
-    end
-end)
+end))
 
 local function IsVisible(targetPart)
     if not Config.WallCheckEnabled then return true end
@@ -373,16 +433,13 @@ local function IsVisible(targetPart)
 end
 
 local function GetClosestTarget()
-    if Config.AimOnRightClick and not IsRightMouseDown then
-        return nil
-    end
-
     local closestTarget = nil
     local shortestDistance = Config.FOV
     local mousePos = UserInputService:GetMouseLocation()
 
     if Config.BotLockEnabled then
-        for _, bot in ipairs(TargetCache.Bots) do
+        for i = #TargetCache.Bots, 1, -1 do
+            local bot = TargetCache.Bots[i]
             if bot and bot.Parent then
                 local hum = bot:FindFirstChildOfClass("Humanoid")
                 if not hum or hum.Health > 0 then
@@ -398,6 +455,8 @@ local function GetClosestTarget()
                         end
                     end
                 end
+            else
+                table.remove(TargetCache.Bots, i)
             end
         end
     end
@@ -472,27 +531,13 @@ Header.BorderSizePixel = 0
 Header.ClipsDescendants = true
 Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 16)
 
-local HeaderImage = Instance.new("ImageLabel", Header)
-HeaderImage.Size = UDim2.new(1, 0, 1, 0)
-HeaderImage.Position = UDim2.new(0, 0, 0, 0)
-HeaderImage.BackgroundTransparency = 1
-HeaderImage.Image = "rbxassetid://YOUR_IMAGE_ID"
-HeaderImage.ScaleType = Enum.ScaleType.Crop
-HeaderImage.ImageTransparency = 0.45
-
-local HeaderGradient = Instance.new("UIGradient", Header)
-HeaderGradient.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 0.2),
-    NumberSequenceKeypoint.new(1, 0.8)
-})
-
 local Title = Instance.new("TextLabel", Header)
 Title.Size = UDim2.new(1, -260, 1, 0)
 Title.Position = UDim2.fromOffset(24, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "REDJOHN_HUB (Hold Right-Click Auto Shoot)"
+Title.Text = "REDJOHN_HUB V2"
 Title.TextColor3 = Text_Main
-Title.TextSize = 17
+Title.TextSize = 18
 Title.Font = Enum.Font.GothamBold
 Title.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -505,8 +550,6 @@ KeybindButton.TextColor3 = Text_Main
 KeybindButton.TextSize = 11
 KeybindButton.Font = Enum.Font.GothamMedium
 Instance.new("UICorner", KeybindButton).CornerRadius = UDim.new(0, 10)
-local keyStroke = Instance.new("UIStroke", KeybindButton)
-keyStroke.Color = Stroke_Color
 KeybindButtonRef = KeybindButton
 
 KeybindButton.MouseButton1Click:Connect(function()
@@ -523,8 +566,6 @@ Minimize.TextColor3 = Text_Main
 Minimize.TextSize = 16
 Minimize.Font = Enum.Font.GothamBold
 Instance.new("UICorner", Minimize).CornerRadius = UDim.new(0, 10)
-local minStroke = Instance.new("UIStroke", Minimize)
-minStroke.Color = Stroke_Color
 
 local Close = Instance.new("TextButton", Header)
 Close.Size = UDim2.fromOffset(36, 36)
@@ -535,8 +576,26 @@ Close.TextColor3 = Color3.fromRGB(255, 100, 100)
 Close.TextSize = 14
 Close.Font = Enum.Font.GothamBold
 Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 10)
-local closeStroke = Instance.new("UIStroke", Close)
-closeStroke.Color = Color3.fromRGB(80, 30, 35)
+
+local function UnloadScript()
+    Config.FullBrightEnabled = false
+    ApplyFullBright()
+    
+    for _, conn in ipairs(Connections) do
+        if conn and conn.Connected then
+            conn:Disconnect()
+        end
+    end
+    table.clear(Connections)
+    
+    DestroyAllESP()
+    
+    if ScreenGui then
+        ScreenGui:Destroy()
+    end
+end
+
+Close.MouseButton1Click:Connect(UnloadScript)
 
 local ContentContainer = Instance.new("ScrollingFrame", Main)
 ContentContainer.Size = UDim2.new(1, -32, 1, -145)
@@ -546,6 +605,19 @@ ContentContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
 ContentContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
 ContentContainer.ScrollBarThickness = 4
 ContentContainer.ScrollBarImageColor3 = Color3.fromRGB(70, 70, 90)
+
+local Footer = Instance.new("Frame", Main)
+Footer.Size = UDim2.new(1, -32, 0, 45)
+Footer.Position = UDim2.new(0, 16, 1, -55)
+Footer.BackgroundTransparency = 1
+
+local isMinimized = false
+Minimize.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    ContentContainer.Visible = not isMinimized
+    Footer.Visible = not isMinimized
+    Main.Size = isMinimized and UDim2.fromOffset(940, 75) or UDim2.fromOffset(940, 720)
+end)
 
 local LeftCol = Instance.new("Frame", ContentContainer)
 LeftCol.Size = UDim2.new(0.488, 0, 0, 0)
@@ -591,7 +663,6 @@ local function CreateToggle(text, idKey, parent, callback)
     circle.Size = UDim2.fromOffset(16, 16)
     circle.Position = UDim2.new(0, 3, 0.5, -8)
     Instance.new("UICorner", circle).CornerRadius = UDim.new(1, 0)
-    circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 
     local function SetState(state)
         switchBg.BackgroundColor3 = state and Color3.fromRGB(240, 240, 250) or Color3.fromRGB(30, 30, 42)
@@ -605,7 +676,7 @@ local function CreateToggle(text, idKey, parent, callback)
         SetState(Config[idKey])
         if not Config[idKey] then
             if idKey == "PlayerESPEnabled" then
-                for _, plr in ipairs(Players:GetPlayers()) do if plr.Character then Remove3DESP(plr.Character) end end
+                for _, plr in ipairs(Players:GetPlayers()) do if plr.Character then Disable3DESP(plr.Character) end end
             elseif idKey == "BotESPEnabled" then
                 for _, bot in ipairs(TargetCache.Bots) do Disable3DESP(bot) end
             elseif idKey == "ItemBoxESPEnabled" then
@@ -655,13 +726,13 @@ local function CreateSlider(title, minVal, maxVal, idKey, isFloat, parent, callb
         val = math.clamp(val, minVal, maxVal)
         local pos = (val - minVal) / (maxVal - minVal)
         sliderFill.Size = UDim2.new(pos, 0, 1, 0)
-        label.Text = isFloat and (title .. ": " .. string.format("%.1fx", val)) or (title .. ": " .. math.floor(val))
+        label.Text = isFloat and (title .. ": " .. string.format("%.2f", val)) or (title .. ": " .. math.floor(val))
     end
 
     local draggingSlider = false
     local function updateValue(input)
         local pos = math.clamp((input.Position.X - sliderBar.AbsolutePosition.X) / sliderBar.AbsoluteSize.X, 0, 1)
-        local val = isFloat and tonumber(string.format("%.1f", minVal + ((maxVal - minVal) * pos))) or math.floor(minVal + ((maxVal - minVal) * pos))
+        local val = isFloat and tonumber(string.format("%.2f", minVal + ((maxVal - minVal) * pos))) or math.floor(minVal + ((maxVal - minVal) * pos))
         Config[idKey] = val
         SetValue(val)
         if callback then callback(val) end
@@ -688,28 +759,26 @@ local function CreateSlider(title, minVal, maxVal, idKey, isFloat, parent, callb
     SetValue(Config[idKey])
 end
 
-CreateToggle("Aimlock (Player 100%)", "AimEnabled", LeftCol)
-CreateToggle("Bot Headlock (100%)", "BotLockEnabled", LeftCol)
-CreateToggle("Aim Only on Right Click", "AimOnRightClick", LeftCol)
-CreateToggle("Hold Right-Click Auto Shoot", "AutoHoldShootEnabled", LeftCol) -- ฟังก์ชันใหม่ คลิกขวาค้างยิงออโต้
-CreateToggle("Wall Check (Off = Through Walls)", "WallCheckEnabled", LeftCol)
+CreateToggle("Aim Lock", "AimEnabled", LeftCol)
+CreateToggle("Bot Lock", "BotLockEnabled", LeftCol)
+CreateToggle("Wall Check", "WallCheckEnabled", LeftCol)
 CreateToggle("Prediction", "PredictionEnabled", LeftCol)
-CreateToggle("Auto Shoot (General)", "AutoShootEnabled", LeftCol)
-CreateToggle("No Recoil", "NoRecoilEnabled", LeftCol)
-CreateToggle("Fire Rate Booster (Ultra)", "FireRateEnabled", LeftCol)
-CreateSlider("Fire Rate Multiplier", 1.0, 10.0, "FireRateMultiplier", true, LeftCol)
-CreateToggle("Show FOV Circle", "ShowFOVCircle", LeftCol)
+CreateSlider("Aim Smoothness", 0.00, 0.95, "AimSmoothness", true, LeftCol)
 CreateSlider("FOV Radius", 50, 800, "FOV", false, LeftCol)
-CreateSlider("Aim Smoothness (0 = Instant)", 0.0, 0.1, "Smoothness", true, LeftCol)
+CreateToggle("Show FOV Circle", "ShowFOVCircle", LeftCol)
 
-CreateToggle("Player 3D ESP", "PlayerESPEnabled", RightCol)
+CreateToggle("No Recoil", "NoRecoilEnabled", LeftCol)
+CreateToggle("Safe Fire Rate Booster", "FireRateEnabled", LeftCol)
+CreateSlider("Fire Rate Boost", 1.0, 3.0, "FireRateMultiplier", true, LeftCol)
+
+CreateToggle("ESP Player", "PlayerESPEnabled", RightCol)
 CreateSlider("Player Distance", 100, 10000, "PlayerESPDistance", false, RightCol)
 
-CreateToggle("Bot 3D ESP", "BotESPEnabled", RightCol)
+CreateToggle("Bot ESP Only", "BotESPEnabled", RightCol)
 CreateSlider("Bot Distance", 100, 10000, "BotESPDistance", false, RightCol)
 
 CreateToggle("Item & Box ESP", "ItemBoxESPEnabled", RightCol)
-CreateSlider("Item & Box Distance", 50, 3000, "ItemBoxESPDistance", false, RightCol)
+CreateSlider("Item Distance", 50, 5000, "ItemBoxESPDistance", false, RightCol)
 
 CreateToggle("Safezone / Extract ESP", "ExitESPEnabled", RightCol)
 CreateSlider("Safezone Distance", 100, 10000, "ExitESPDistance", false, RightCol)
@@ -718,13 +787,11 @@ CreateToggle("Corpse ESP", "CorpseESPEnabled", RightCol)
 CreateSlider("Corpse Distance", 50, 10000, "CorpseESPDistance", false, RightCol)
 
 CreateToggle("Full Bright", "FullBrightEnabled", RightCol, function(v) 
-    ApplyFullBright(v)
+    ApplyFullBright()
 end)
-
-local Footer = Instance.new("Frame", Main)
-Footer.Size = UDim2.new(1, -32, 0, 45)
-Footer.Position = UDim2.new(0, 16, 1, -55)
-Footer.BackgroundTransparency = 1
+CreateSlider("Full Bright Intensity", 1.0, 10.0, "FullBrightIntensity", true, RightCol, function(v)
+    ApplyFullBright()
+end)
 
 local SaveBtn = Instance.new("TextButton", Footer)
 SaveBtn.Size = UDim2.new(0.32, 0, 1, 0)
@@ -744,8 +811,6 @@ LoadBtn.TextColor3 = Text_Main
 LoadBtn.Font = Enum.Font.GothamBold
 LoadBtn.TextSize = 13
 Instance.new("UICorner", LoadBtn).CornerRadius = UDim.new(0, 10)
-local loadStroke = Instance.new("UIStroke", LoadBtn)
-loadStroke.Color = Stroke_Color
 
 local DeleteBtn = Instance.new("TextButton", Footer)
 DeleteBtn.Size = UDim2.new(0.32, 0, 1, 0)
@@ -756,13 +821,11 @@ DeleteBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
 DeleteBtn.Font = Enum.Font.GothamBold
 DeleteBtn.TextSize = 13
 Instance.new("UICorner", DeleteBtn).CornerRadius = UDim.new(0, 10)
-local delStroke = Instance.new("UIStroke", DeleteBtn)
-delStroke.Color = Color3.fromRGB(80, 30, 35)
 
 local function RefreshUI()
     for k, setFunc in pairs(UI_Elements.Toggles) do setFunc(Config[k]) end
     for k, setFunc in pairs(UI_Elements.Sliders) do setFunc(Config[k]) end
-    ApplyFullBright(Config.FullBrightEnabled)
+    ApplyFullBright()
 end
 
 SaveBtn.MouseButton1Click:Connect(function()
@@ -790,31 +853,8 @@ end)
 
 RefreshUI()
 
-task.spawn(function()
-    pcall(function()
-        local mt = getrawmetatable(game)
-        setreadonly(mt, false)
-        local oldIndex = mt.__index
-        
-        mt.__index = newcclosure(function(self, k)
-            if Config.NoRecoilEnabled and (k == "Recoil" or k == "CameraRecoil" or k == "Spread" or k == "Kickback") then
-                return 0
-            end
-            return oldIndex(self, k)
-        end)
-        setreadonly(mt, true)
-    end)
-end)
-
-local IsRunning = true
-local Connection
-
-Connection = RunService.RenderStepped:Connect(function()
-    if not IsRunning then
-        Connection:Disconnect()
-        return
-    end
-
+-- Main Loop
+table.insert(Connections, RunService.RenderStepped:Connect(function()
     local camPos = Camera.CFrame.Position
     local mousePos = UserInputService:GetMouseLocation()
     
@@ -822,40 +862,36 @@ Connection = RunService.RenderStepped:Connect(function()
     FOVCircle.Position = UDim2.fromOffset(mousePos.X, mousePos.Y)
     FOVCircle.Visible = Config.ShowFOVCircle
 
-    if Config.NoRecoilEnabled and LocalPlayer.Character then
-        local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-        if tool then
-            for _, v in ipairs(tool:GetDescendants()) do
-                if v:IsA("NumberValue") or v:IsA("IntValue") then
-                    local vName = v.Name:lower()
-                    if vName:find("recoil") or vName:find("spread") or vName:find("kick") then
-                        v.Value = 0
-                    end
-                end
-            end
-        end
-    end
-
     if Config.FireRateEnabled and LocalPlayer.Character then
         local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
         if tool then
             for _, v in ipairs(tool:GetDescendants()) do
                 if v:IsA("NumberValue") or v:IsA("IntValue") then
                     local vName = v.Name:lower()
-                    if vName:find("firerate") or vName:find("cooldown") or vName:find("delay") or vName:find("rpm") or vName:find("fire") or vName:find("rate") then
-                        if v.Value > 0 then
-                            if vName:find("rpm") or (vName:find("rate") and not vName:find("cooldown")) then
-                                v.Value = v.Value * Config.FireRateMultiplier
-                            else
-                                v.Value = math.max(0.001, v.Value / Config.FireRateMultiplier)
-                            end
-                        end
+                    if vName:find("cooldown") or vName:find("delay") then
+                        v.Value = math.max(0.01, v.Value / Config.FireRateMultiplier)
                     end
                 end
             end
         end
     end
 
+    local targetPart = GetClosestTarget()
+    if targetPart then
+        local targetPos = targetPart.Position
+        if Config.PredictionEnabled and targetPart.Parent and targetPart.Parent:FindFirstChild("HumanoidRootPart") then
+            local vel = targetPart.Parent.HumanoidRootPart.AssemblyLinearVelocity
+            targetPos = targetPos + (vel * 0.033)
+        end
+
+        local currentCF = Camera.CFrame
+        local targetCF = CFrame.new(currentCF.Position, targetPos)
+        
+        local alpha = math.clamp(1 - Config.AimSmoothness, 0.01, 1.0)
+        Camera.CFrame = currentCF:Lerp(targetCF, alpha)
+    end
+
+    -- 3D ESP Player
     if Config.PlayerESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
@@ -863,21 +899,23 @@ Connection = RunService.RenderStepped:Connect(function()
                 if mainPart then
                     local dist = (camPos - mainPart.Position).Magnitude
                     if dist <= Config.PlayerESPDistance then
-                        local tag = Apply3DESP(plr.Character, Color3.fromRGB(255, 100, 100))
-                        if tag then tag.Text = plr.Name .. " [" .. math.floor(dist) .. "m]" end
+                        local tagText = Apply3DESP(plr.Character, Color3.fromRGB(255, 60, 60))
+                        if tagText then
+                            UpdatePlayerCache(plr)
+                            local cachedInfo = PlayerDataCache[plr]
+                            local equipInfo = cachedInfo and cachedInfo.Equipment or "H: None | C: None"
+                            local weaponInfo = cachedInfo and cachedInfo.Weapon or "None"
+                            tagText.Text = string.format("%s [%dm]\n%s\n[%s]", plr.Name, math.floor(dist), equipInfo, weaponInfo)
+                        end
                     else
                         Disable3DESP(plr.Character)
                     end
                 end
             end
         end
-        if LocalPlayer.Character then Disable3DESP(LocalPlayer.Character) end
-    else
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr.Character then Disable3DESP(plr.Character) end
-        end
     end
 
+    -- 3D ESP Bot
     if Config.BotESPEnabled then
         for i = #TargetCache.Bots, 1, -1 do
             local bot = TargetCache.Bots[i]
@@ -886,8 +924,10 @@ Connection = RunService.RenderStepped:Connect(function()
                 if mainPart then
                     local dist = (camPos - mainPart.Position).Magnitude
                     if dist <= Config.BotESPDistance then
-                        local tag = Apply3DESP(bot, Color3.fromRGB(255, 180, 50))
-                        if tag then tag.Text = "[BOT] " .. bot.Name .. " [" .. math.floor(dist) .. "m]" end
+                        local tagText = Apply3DESP(bot, Color3.fromRGB(255, 170, 0))
+                        if tagText then
+                            tagText.Text = string.format("BOT: %s [%dm]", GetItemName(bot), math.floor(dist))
+                        end
                     else
                         Disable3DESP(bot)
                     end
@@ -896,77 +936,74 @@ Connection = RunService.RenderStepped:Connect(function()
                 table.remove(TargetCache.Bots, i)
             end
         end
-    else
-        for _, bot in ipairs(TargetCache.Bots) do Disable3DESP(bot) end
     end
 
-    local function ProcessListESP(list, isEnabled, color, maxDist, prefix)
-        if isEnabled then
-            for i = #list, 1, -1 do
-                local obj = list[i]
-                if obj and obj.Parent then
-                    local mainPart = GetMainPart(obj)
-                    if mainPart then
-                        local dist = (camPos - mainPart.Position).Magnitude
-                        if dist <= maxDist then
-                            local tag = Apply3DESP(obj, color)
-                            if tag then 
-                                local realName = GetItemName(obj)
-                                tag.Text = prefix .. " " .. realName .. " [" .. math.floor(dist) .. "m]" 
-                            end
-                        else
-                            Disable3DESP(obj)
+    -- ESP Items
+    if Config.ItemBoxESPEnabled then
+        for i = #TargetCache.ItemBoxes, 1, -1 do
+            local item = TargetCache.ItemBoxes[i]
+            if item and item.Parent then
+                local mainPart = GetMainPart(item)
+                if mainPart then
+                    local dist = (camPos - mainPart.Position).Magnitude
+                    if dist <= Config.ItemBoxESPDistance then
+                        local tagText = Apply3DESP(item, Color3.fromRGB(80, 200, 255))
+                        if tagText then
+                            tagText.Text = string.format("%s [%dm]", GetItemName(item), math.floor(dist))
                         end
+                    else
+                        Disable3DESP(item)
                     end
-                else
-                    table.remove(list, i)
                 end
-            end
-        else
-            for _, obj in ipairs(list) do Disable3DESP(obj) end
-        end
-    end
-
-    ProcessListESP(TargetCache.ItemBoxes, Config.ItemBoxESPEnabled, Color3.fromRGB(50, 255, 200), Config.ItemBoxESPDistance, "[LOOT]")
-    ProcessListESP(TargetCache.Exits, Config.ExitESPEnabled, Color3.fromRGB(255, 230, 80), Config.ExitESPDistance, "[SAFEZONE]")
-    ProcessListESP(TargetCache.Corpses, Config.CorpseESPEnabled, Color3.fromRGB(180, 180, 200), Config.CorpseESPDistance, "[DEAD]")
-
-    if Config.AimEnabled or Config.BotLockEnabled then
-        local targetHead = GetClosestTarget()
-        if targetHead then
-            local targetPos = targetHead.Position
-            if Config.PredictionEnabled and targetHead.AssemblyLinearVelocity then
-                targetPos = targetPos + (targetHead.AssemblyLinearVelocity * 0.035)
-            end
-            
-            if Config.Smoothness <= 0.001 then
-                Camera.CFrame = CFrame.new(camPos, targetPos)
             else
-                Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(camPos, targetPos), Config.Smoothness)
-            end
-            
-            -- ระบบยิงออโต้ (รวมถึงคลิกขวาค้างแล้วยิงออโต้)
-            if (Config.AutoShootEnabled or (Config.AutoHoldShootEnabled and IsRightMouseDown)) and mouse1press then
-                pcall(function()
-                    mouse1press()
-                    task.delay(0.01, function() if mouse1release then mouse1release() end end)
-                end)
+                table.remove(TargetCache.ItemBoxes, i)
             end
         end
     end
-end)
 
-Minimize.MouseButton1Click:Connect(function()
-    IsMinimized = not IsMinimized
-    ContentContainer.Visible = not IsMinimized
-    Footer.Visible = not IsMinimized
-    Main.Size = IsMinimized and UDim2.fromOffset(940, 75) or UDim2.fromOffset(940, 720)
-    Minimize.Text = IsMinimized and "+" or "-"
-end)
+    -- ESP Exits
+    if Config.ExitESPEnabled then
+        for i = #TargetCache.Exits, 1, -1 do
+            local exit = TargetCache.Exits[i]
+            if exit and exit.Parent then
+                local mainPart = GetMainPart(exit)
+                if mainPart then
+                    local dist = (camPos - mainPart.Position).Magnitude
+                    if dist <= Config.ExitESPDistance then
+                        local tagText = Apply3DESP(exit, Color3.fromRGB(0, 255, 120))
+                        if tagText then
+                            tagText.Text = string.format("EXTRACT: %s [%dm]", GetItemName(exit), math.floor(dist))
+                        end
+                    else
+                        Disable3DESP(exit)
+                    end
+                end
+            else
+                table.remove(TargetCache.Exits, i)
+            end
+        end
+    end
 
-Close.MouseButton1Click:Connect(function()
-    IsRunning = false
-    CleanAllESP()
-    ApplyFullBright(false)
-    ScreenGui:Destroy()
-end)
+    -- ESP Corpses
+    if Config.CorpseESPEnabled then
+        for i = #TargetCache.Corpses, 1, -1 do
+            local corpse = TargetCache.Corpses[i]
+            if corpse and corpse.Parent then
+                local mainPart = GetMainPart(corpse)
+                if mainPart then
+                    local dist = (camPos - mainPart.Position).Magnitude
+                    if dist <= Config.CorpseESPDistance then
+                        local tagText = Apply3DESP(corpse, Color3.fromRGB(180, 180, 180))
+                        if tagText then
+                            tagText.Text = string.format("CORPSE: %s [%dm]", GetItemName(corpse), math.floor(dist))
+                        end
+                    else
+                        Disable3DESP(corpse)
+                    end
+                end
+            else
+                table.remove(TargetCache.Corpses, i)
+            end
+        end
+    end
+end))
