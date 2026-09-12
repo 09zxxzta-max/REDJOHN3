@@ -204,11 +204,9 @@ local function GetItemName(obj)
     return obj.Name
 end
 
--- ดึงชื่อไอเทมจาก Slot HELMET / CHESTRIG ตรงตามโครงสร้างในรูป
 local function GetEquipmentNameFromSlot(container, slotName)
     for _, desc in ipairs(container:GetDescendants()) do
         if desc.Name:upper() == slotName then
-            -- ลองหาจาก ItemInside / Value / Child
             local val = desc:FindFirstChildOfClass("StringValue") or desc:FindFirstChild("ItemName")
             if val and val:IsA("StringValue") and val.Value ~= "" then
                 return val.Value
@@ -250,11 +248,9 @@ local function UpdatePlayerCache(player)
     table.insert(searchContainers, player)
 
     for _, container in ipairs(searchContainers) do
-        -- สแกนช่อง HELMET
         local h = GetEquipmentNameFromSlot(container, "HELMET")
         if h then helmetName = h end
         
-        -- สแกนช่อง CHESTRIG
         local c = GetEquipmentNameFromSlot(container, "CHESTRIG")
         if c then chestRigName = c end
     end
@@ -891,31 +887,34 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         Camera.CFrame = currentCF:Lerp(targetCF, alpha)
     end
 
-    -- 3D ESP Player
+    -- 3D ESP Player Loop Handling
     if Config.PlayerESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
-                local mainPart = GetMainPart(plr.Character)
+                local char = plr.Character
+                local mainPart = GetMainPart(char)
                 if mainPart then
                     local dist = (camPos - mainPart.Position).Magnitude
                     if dist <= Config.PlayerESPDistance then
-                        local tagText = Apply3DESP(plr.Character, Color3.fromRGB(255, 60, 60))
+                        local tagText = Apply3DESP(char, Color3.fromRGB(0, 170, 255))
                         if tagText then
-                            UpdatePlayerCache(plr)
-                            local cachedInfo = PlayerDataCache[plr]
-                            local equipInfo = cachedInfo and cachedInfo.Equipment or "H: None | C: None"
-                            local weaponInfo = cachedInfo and cachedInfo.Weapon or "None"
-                            tagText.Text = string.format("%s [%dm]\n%s\n[%s]", plr.Name, math.floor(dist), equipInfo, weaponInfo)
+                            local data = PlayerDataCache[plr]
+                            local infoStr = data and (data.Equipment .. "\n" .. data.Weapon) or ""
+                            tagText.Text = string.format("%s\n[%d m]\n%s", plr.Name, math.floor(dist), infoStr)
                         end
                     else
-                        Disable3DESP(plr.Character)
+                        Disable3DESP(char)
                     end
                 end
             end
         end
+    else
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character then Disable3DESP(plr.Character) end
+        end
     end
 
-    -- 3D ESP Bot
+    -- Bot ESP Loop
     if Config.BotESPEnabled then
         for i = #TargetCache.Bots, 1, -1 do
             local bot = TargetCache.Bots[i]
@@ -924,9 +923,9 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                 if mainPart then
                     local dist = (camPos - mainPart.Position).Magnitude
                     if dist <= Config.BotESPDistance then
-                        local tagText = Apply3DESP(bot, Color3.fromRGB(255, 170, 0))
+                        local tagText = Apply3DESP(bot, Color3.fromRGB(255, 50, 50))
                         if tagText then
-                            tagText.Text = string.format("BOT: %s [%dm]", GetItemName(bot), math.floor(dist))
+                            tagText.Text = string.format("Bot\n[%d m]", math.floor(dist))
                         end
                     else
                         Disable3DESP(bot)
@@ -936,74 +935,82 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                 table.remove(TargetCache.Bots, i)
             end
         end
+    else
+        for _, bot in ipairs(TargetCache.Bots) do Disable3DESP(bot) end
     end
 
-    -- ESP Items
+    -- Item & Box ESP Loop
     if Config.ItemBoxESPEnabled then
         for i = #TargetCache.ItemBoxes, 1, -1 do
-            local item = TargetCache.ItemBoxes[i]
-            if item and item.Parent then
-                local mainPart = GetMainPart(item)
+            local obj = TargetCache.ItemBoxes[i]
+            if obj and obj.Parent then
+                local mainPart = GetMainPart(obj)
                 if mainPart then
                     local dist = (camPos - mainPart.Position).Magnitude
                     if dist <= Config.ItemBoxESPDistance then
-                        local tagText = Apply3DESP(item, Color3.fromRGB(80, 200, 255))
+                        local tagText = Apply3DESP(obj, Color3.fromRGB(255, 200, 0))
                         if tagText then
-                            tagText.Text = string.format("%s [%dm]", GetItemName(item), math.floor(dist))
+                            tagText.Text = string.format("%s\n[%d m]", GetItemName(obj), math.floor(dist))
                         end
                     else
-                        Disable3DESP(item)
+                        Disable3DESP(obj)
                     end
                 end
             else
                 table.remove(TargetCache.ItemBoxes, i)
             end
         end
+    else
+        for _, obj in ipairs(TargetCache.ItemBoxes) do Disable3DESP(obj) end
     end
 
-    -- ESP Exits
+    -- Exit ESP Loop
     if Config.ExitESPEnabled then
         for i = #TargetCache.Exits, 1, -1 do
-            local exit = TargetCache.Exits[i]
-            if exit and exit.Parent then
-                local mainPart = GetMainPart(exit)
+            local obj = TargetCache.Exits[i]
+            if obj and obj.Parent then
+                local mainPart = GetMainPart(obj)
                 if mainPart then
                     local dist = (camPos - mainPart.Position).Magnitude
                     if dist <= Config.ExitESPDistance then
-                        local tagText = Apply3DESP(exit, Color3.fromRGB(0, 255, 120))
+                        local tagText = Apply3DESP(obj, Color3.fromRGB(0, 255, 100))
                         if tagText then
-                            tagText.Text = string.format("EXTRACT: %s [%dm]", GetItemName(exit), math.floor(dist))
+                            tagText.Text = string.format("Extract: %s\n[%d m]", obj.Name, math.floor(dist))
                         end
                     else
-                        Disable3DESP(exit)
+                        Disable3DESP(obj)
                     end
                 end
             else
                 table.remove(TargetCache.Exits, i)
             end
         end
+    else
+        for _, obj in ipairs(TargetCache.Exits) do Disable3DESP(obj) end
     end
 
-    -- ESP Corpses
+    -- Corpse ESP Loop
     if Config.CorpseESPEnabled then
         for i = #TargetCache.Corpses, 1, -1 do
-            local corpse = TargetCache.Corpses[i]
-            if corpse and corpse.Parent then
-                local mainPart = GetMainPart(corpse)
+            local obj = TargetCache.Corpses[i]
+            if obj and obj.Parent then
+                local mainPart = GetMainPart(obj)
                 if mainPart then
                     local dist = (camPos - mainPart.Position).Magnitude
                     if dist <= Config.CorpseESPDistance then
-                        local tagText = Apply3DESP(corpse, Color3.fromRGB(180, 180, 180))
+                        local tagText = Apply3DESP(obj, Color3.fromRGB(150, 150, 150))
                         if tagText then
-                            tagText.Text = string.format("CORPSE: %s [%dm]", GetItemName(corpse), math.floor(dist))
+                            tagText.Text = string.format("Corpse\n[%d m]", math.floor(dist))
                         end
                     else
-                        Disable3DESP(corpse)
+                        Disable3DESP(obj)
                     end
                 end
             else
                 table.remove(TargetCache.Corpses, i)
             end
         end
+    else
+        for _, obj in ipairs(TargetCache.Corpses) do Disable3DESP(obj) end
     end
 end))
