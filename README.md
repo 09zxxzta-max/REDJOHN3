@@ -56,7 +56,6 @@ local DefaultConfig = {
     UITextSize = 13,
 
     FOV = 300,
-    GlobalESPDistance = 5000,
     PlayerESPDistance = 5000,
     BotESPDistance = 5000,
     ItemBoxESPDistance = 5000,
@@ -74,6 +73,11 @@ local KeybindButtonRef = nil
 local AimKeybindButtonRef = nil
 
 local Connections = {}
+local function SafeConnect(signal, func)
+    local conn = signal:Connect(func)
+    table.insert(Connections, conn)
+    return conn
+end
 
 local OriginalLighting = {
     Brightness = Lighting.Brightness,
@@ -156,7 +160,7 @@ local function DeleteConfig()
         KeybindButtonRef.Text = "UI Key: " .. tostring(ToggleKeybind.Name)
     end
     if AimKeybindButtonRef then
-        AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimKeybindButton.Name)
+        AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimKeybindButtonRef.Text and tostring(AimModeKeybind.Name) or "")
     end
 end
 
@@ -190,11 +194,11 @@ local function ApplyFullBright()
     end)
 end
 
-table.insert(Connections, Lighting.Changed:Connect(function()
+SafeConnect(Lighting.Changed, function()
     if Config.FullBrightEnabled then
         ApplyFullBright()
     end
-end))
+end)
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "REDJOHN"
@@ -205,6 +209,7 @@ local FOVCircle = Instance.new("Frame", ScreenGui)
 FOVCircle.Name = "FOVCircle"
 FOVCircle.BackgroundTransparency = 1
 FOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+FOVCircle.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
 FOVCircle.Visible = Config.ShowFOVCircle
 
 local FOVStroke = Instance.new("UIStroke", FOVCircle)
@@ -233,6 +238,20 @@ local function GetItemName(obj)
     return obj.Name
 end
 
+local function GetBotName(botModel)
+    if not botModel then return "Bot" end
+    if botModel:FindFirstChild("DisplayName") and botModel.DisplayName:IsA("StringValue") then
+        return botModel.DisplayName.Value
+    elseif botModel:GetAttribute("DisplayName") then
+        return tostring(botModel:GetAttribute("DisplayName"))
+    elseif botModel:GetAttribute("BotName") then
+        return tostring(botModel:GetAttribute("BotName"))
+    elseif botModel:FindFirstChild("Username") and botModel.Username:IsA("StringValue") then
+        return botModel.Username.Value
+    end
+    return botModel.Name
+end
+
 local function GetPlayerHeldItem(player)
     if not player then return "Nothing" end
     local itemsFound = {}
@@ -248,8 +267,7 @@ local function GetPlayerHeldItem(player)
     local backpack = player:FindFirstChildOfClass("Backpack") or player:FindFirstChild("Backpack") or player:FindFirstChild("Inventory")
     if backpack then
         for _, item in ipairs(backpack:GetChildren()) do
-            local itemName = GetItemName(item) or item.Name
-            addItem(itemName)
+            addItem(GetItemName(item) or item.Name)
         end
     end
 
@@ -262,37 +280,21 @@ local function GetPlayerHeldItem(player)
                 if not (child:IsA("Accessory") or child:IsA("Hat") or child:IsA("Clothing") or child:IsA("ShirtGraphic")) then
                     local childName = child.Name:lower()
                     local isClothing = childName:find("shirt") or childName:find("pants") or childName:find("vest") 
-                                              or childName:find("armor") or childName:find("helmet") or childName:find("cloth") 
-                                              or childName:find("bag") or childName:find("backpack") or childName:find("suit")
+                                     or childName:find("armor") or childName:find("helmet") or childName:find("cloth") 
+                                     or childName:find("bag") or childName:find("backpack") or childName:find("suit")
                     if not isClothing then
                         addItem(GetItemName(child) or child.Name)
                     end
                 end
             end
         end
-
-        local inventoryFolder = char:FindFirstChild("Inventory") or char:FindFirstChild("Weapons") or char:FindFirstChild("Slots")
-        if inventoryFolder then
-            for _, val in ipairs(inventoryFolder:GetChildren()) do
-                if val:IsA("StringValue") and val.Value ~= "" then
-                    addItem(val.Value)
-                elseif val:IsA("ObjectValue") and val.Value then
-                    addItem(val.Value.Name)
-                end
-            end
-        end
     end
 
-    if #itemsFound > 0 then
-        return table.concat(itemsFound, ", ")
-    end
-
-    return "Nothing"
+    return #itemsFound > 0 and table.concat(itemsFound, ", ") or "Nothing"
 end
 
 local function Apply3DESP(model, color)
     if not model then return nil end
-    
     local data = ESPCache[model]
     if not data then
         local highlight = Instance.new("Highlight")
@@ -304,11 +306,7 @@ local function Apply3DESP(model, color)
         highlight.Parent = model
 
         local mainPart = GetMainPart(model)
-        local tagText = nil
-        local bb = nil
-        local healthFrame = nil
-        local healthFill = nil
-        local healthText = nil
+        local tagText, bb, healthFrame, healthFill, healthText
 
         if mainPart then
             bb = Instance.new("BillboardGui")
@@ -358,19 +356,12 @@ local function Apply3DESP(model, color)
             bb.Parent = mainPart
         end
 
-        data = { 
-            Highlight = highlight, 
-            Billboard = bb, 
-            TagText = tagText,
-            HealthFrame = healthFrame,
-            HealthFill = healthFill,
-            HealthText = healthText
-        }
+        data = { Highlight = highlight, Billboard = bb, TagText = tagText, HealthFrame = healthFrame, HealthFill = healthFill, HealthText = healthText }
         ESPCache[model] = data
         
-        table.insert(Connections, model.Destroying:Connect(function()
+        SafeConnect(model.Destroying, function()
             ESPCache[model] = nil
-        end))
+        end)
     end
 
     data.Highlight.Enabled = true
@@ -449,12 +440,24 @@ local function InitialScan()
 end
 
 InitialScan()
+SafeConnect(workspace.DescendantAdded, ClassifyAndAddObject)
 
-table.insert(Connections, workspace.DescendantAdded:Connect(function(child)
-    ClassifyAndAddObject(child)
-end))
+local function setupPlayerRespawnESP(plr)
+    SafeConnect(plr.CharacterAdded, function(char)
+        task.wait(0.3)
+        if ESPCache[char] then
+            Disable3DESP(char)
+            ESPCache[char] = nil
+        end
+    end)
+end
 
-table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+for _, plr in ipairs(Players:GetPlayers()) do
+    setupPlayerRespawnESP(plr)
+end
+SafeConnect(Players.PlayerAdded, setupPlayerRespawnESP)
+
+SafeConnect(UserInputService.InputBegan, function(input, gameProcessed)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then
         isRMBDown = true
     end
@@ -463,9 +466,7 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, ga
         if input.UserInputType == Enum.UserInputType.Keyboard then
             ToggleKeybind = input.KeyCode
             isListeningForKey = false
-            if KeybindButtonRef then
-                KeybindButtonRef.Text = "UI Key: " .. tostring(ToggleKeybind.Name)
-            end
+            if KeybindButtonRef then KeybindButtonRef.Text = "UI Key: " .. tostring(ToggleKeybind.Name) end
             SaveConfig()
         end
         return
@@ -475,9 +476,7 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, ga
         if input.UserInputType == Enum.UserInputType.Keyboard then
             AimModeKeybind = input.KeyCode
             isListeningForAimKey = false
-            if AimKeybindButtonRef then
-                AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimModeKeybind.Name)
-            end
+            if AimKeybindButtonRef then AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimModeKeybind.Name) end
             SaveConfig()
         end
         return
@@ -486,86 +485,17 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, ga
     if input.KeyCode == ToggleKeybind then
         ScreenGui.Enabled = not ScreenGui.Enabled
     elseif input.KeyCode == AimModeKeybind then
-        if Config.AimMode == "Hold RMB" then
-            Config.AimMode = "Auto Lock (Always)"
-        else
-            Config.AimMode = "Hold RMB"
-        end
-        if UI_Elements.Buttons["AimModeBtn"] then
-            UI_Elements.Buttons["AimModeBtn"].Text = "Aim Mode: " .. Config.AimMode
-        end
+        Config.AimMode = Config.AimMode == "Hold RMB" and "Auto Lock (Always)" or "Hold RMB"
+        if UI_Elements.Buttons["AimModeBtn"] then UI_Elements.Buttons["AimModeBtn"].Text = "Aim Mode: " .. Config.AimMode end
         SaveConfig()
     end
-end))
+end)
 
-table.insert(Connections, UserInputService.InputEnded:Connect(function(input)
+SafeConnect(UserInputService.InputEnded, function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then
         isRMBDown = false
     end
-end))
-
-local function IsVisible(targetPart)
-    if not Config.WallCheckEnabled then return true end
-    local origin = Camera.CFrame.Position
-    local direction = (targetPart.Position - origin)
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = { Camera, LocalPlayer.Character }
-    
-    local result = workspace:Raycast(origin, direction, raycastParams)
-    return result == nil or result.Instance:IsDescendantOf(targetPart.Parent)
-end
-
-local function GetClosestTarget()
-    local closestTarget = nil
-    local shortestDistance = Config.FOV
-    local mousePos = UserInputService:GetMouseLocation()
-
-    if Config.BotLockEnabled then
-        for i = #TargetCache.Bots, 1, -1 do
-            local bot = TargetCache.Bots[i]
-            if bot and bot.Parent then
-                local hum = bot:FindFirstChildOfClass("Humanoid")
-                local head = bot:FindFirstChild("Head") or GetMainPart(bot)
-                if hum and hum.Health > 0 and head then
-                    local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
-                    if onScreen then
-                        local distFromMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                        if distFromMouse < shortestDistance and IsVisible(head) then
-                            shortestDistance = distFromMouse
-                            closestTarget = head
-                        end
-                    end
-                end
-            else
-                table.remove(TargetCache.Bots, i)
-            end
-        end
-    end
-
-    if Config.AimEnabled and not closestTarget then
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                local char = player.Character
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                local targetPart = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-
-                if hum and hum.Health > 0 and targetPart then
-                    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-                    if onScreen then
-                        local distFromMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                        if distFromMouse < shortestDistance and IsVisible(targetPart) then
-                            shortestDistance = distFromMouse
-                            closestTarget = targetPart
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    return closestTarget
-end
+end)
 
 local BG_Main = Color3.fromRGB(12, 12, 16)
 local Card_BG = Color3.fromRGB(18, 18, 24)
@@ -680,20 +610,22 @@ local function UnloadScript()
     ApplyFullBright()
     
     for _, conn in ipairs(Connections) do
-        if conn and conn.Connected then
-            conn:Disconnect()
+        if conn and typeof(conn) == "RBXScriptConnection" and conn.Connected then
+            pcall(function() conn:Disconnect() end)
         end
     end
     table.clear(Connections)
-    
     DestroyAllESP()
     
-    if ScreenGui then
-        ScreenGui:Destroy()
-    end
+    pcall(function()
+        if ScreenGui then ScreenGui:Destroy() end
+    end)
 end
 
-Close.MouseButton1Click:Connect(UnloadScript)
+Close.MouseButton1Click:Connect(function()
+    Main.Visible = false
+    UnloadScript()
+end)
 
 local ContentContainer = Instance.new("ScrollingFrame", Main)
 ContentContainer.Size = UDim2.new(1, -32, 1, -145)
@@ -808,11 +740,7 @@ local function CreateModeButton(parent)
     table.insert(DynamicUITexts, btn)
 
     btn.MouseButton1Click:Connect(function()
-        if Config.AimMode == "Hold RMB" then
-            Config.AimMode = "Auto Lock (Always)"
-        else
-            Config.AimMode = "Hold RMB"
-        end
+        Config.AimMode = Config.AimMode == "Hold RMB" and "Auto Lock (Always)" or "Hold RMB"
         btn.Text = "Aim Mode: " .. Config.AimMode
         SaveConfig()
     end)
@@ -906,107 +834,152 @@ local function CreateButton(text, callback, parent, colorOverride)
     return btn
 end
 
--- Populate Left Column (Combat / Aim / Misc Toggles)
-CreateToggle("Aim Assist Enabled", "AimEnabled", LeftCol)
+-- Populate UI Left/Right
+CreateToggle("Aim Enabled", "AimEnabled", LeftCol)
 CreateModeButton(LeftCol)
 CreateToggle("Bot Lock Enabled", "BotLockEnabled", LeftCol)
-CreateToggle("Wall Check", "WallCheckEnabled", LeftCol)
-CreateToggle("Prediction", "PredictionEnabled", LeftCol)
-CreateSlider("Aim Smoothness", 0.01, 1.0, "AimSmoothness", true, LeftCol)
+CreateToggle("Wall Check Enabled", "WallCheckEnabled", LeftCol)
+CreateToggle("Prediction Enabled", "PredictionEnabled", LeftCol)
+CreateSlider("Aim Smoothness", 0.05, 1.0, "AimSmoothness", true, LeftCol)
 CreateSlider("FOV Radius", 50, 600, "FOV", false, LeftCol, function(val)
-    if FOVCircle then
-        FOVCircle.Size = UDim2.fromOffset(val * 2, val * 2)
-    end
+    FOVCircle.Size = UDim2.fromOffset(val * 2, val * 2)
 end)
 CreateToggle("Show FOV Circle", "ShowFOVCircle", LeftCol, function(state)
-    if FOVCircle then FOVCircle.Visible = state end
+    FOVCircle.Visible = state
 end)
 CreateToggle("No Recoil", "NoRecoilEnabled", LeftCol)
-CreateToggle("FullBright", "FullBrightEnabled", LeftCol, function()
-    ApplyFullBright()
+
+CreateToggle("Player ESP", "PlayerESPEnabled", RightCol)
+CreateSlider("Player Distance", 100, 10000, "PlayerESPDistance", false, RightCol)
+CreateToggle("Bot ESP", "BotESPEnabled", RightCol)
+CreateSlider("Bot Distance", 100, 10000, "BotESPDistance", false, RightCol)
+CreateToggle("Item Box ESP", "ItemBoxESPEnabled", RightCol)
+CreateSlider("Item Distance", 100, 10000, "ItemBoxESPDistance", false, RightCol)
+CreateToggle("Exit ESP", "ExitESPEnabled", RightCol)
+CreateSlider("Exit Distance", 100, 10000, "ExitESPDistance", false, RightCol)
+CreateToggle("Corpse ESP", "CorpseESPEnabled", RightCol)
+CreateSlider("Corpse Distance", 100, 10000, "CorpseESPDistance", false, RightCol)
+
+CreateToggle("Fullbright", "FullBrightEnabled", RightCol, ApplyFullBright)
+CreateSlider("Fullbright Intensity", 1.0, 10.0, "FullBrightIntensity", true, RightCol, function()
+    if Config.FullBrightEnabled then ApplyFullBright() end
 end)
 
--- Populate Right Column (ESP / Distances / Config Mgmt)
-CreateToggle("Player ESP", "PlayerESPEnabled", RightCol)
-CreateToggle("Bot ESP", "BotESPEnabled", RightCol)
-CreateToggle("Item Box ESP", "ItemBoxESPEnabled", RightCol)
-CreateToggle("Exit ESP", "ExitESPEnabled", RightCol)
-CreateToggle("Corpse ESP", "CorpseESPEnabled", RightCol)
-CreateSlider("Global ESP Distance", 100, 10000, "GlobalESPDistance", false, RightCol, function(val)
-    Config.PlayerESPDistance = val
-    Config.BotESPDistance = val
-    Config.ItemBoxESPDistance = val
-    Config.ExitESPDistance = val
-    Config.CorpseESPDistance = val
-end)
-CreateSlider("UI / ESP Text Size", 9, 24, "ESPTextSize", false, RightCol, function(val)
+CreateSlider("ESP Text Size", 9, 24, "ESPTextSize", false, RightCol, function(val) Config.ESPTextSize = val end)
+CreateSlider("UI Text Size", 10, 20, "UITextSize", false, RightCol, function(val)
     Config.UITextSize = val
     UpdateAllUITextSizes(val)
 end)
-CreateButton("Save Config", function()
-    SaveConfig()
-end, RightCol)
-CreateButton("Reset Config", function()
-    DeleteConfig()
-end, RightCol, Color3.fromRGB(45, 20, 25))
 
-FOVCircle.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
+CreateButton("Save Config", SaveConfig, RightCol)
+CreateButton("Reset / Delete Config", DeleteConfig, RightCol, Color3.fromRGB(45, 20, 25))
 
--- Main Loop (Aim, ESP rendering updates, FOV positioning)
-table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
-    local mouseLoc = UserInputService:GetMouseLocation()
-    FOVCircle.Position = UDim2.fromOffset(mouseLoc.X, mouseLoc.Y)
-    FOVCircle.Visible = Config.ShowFOVCircle and ScreenGui.Enabled
+local FooterText = Instance.new("TextLabel", Footer)
+FooterText.Size = UDim2.new(1, 0, 1, 0)
+FooterText.BackgroundTransparency = 1
+FooterText.Text = "REDJOHN HUB | Loaded Successfully"
+FooterText.TextColor3 = Text_Sub
+FooterText.TextSize = 12
+FooterText.Font = Enum.Font.GothamMedium
 
-    local shouldAim = false
-    if Config.AimMode == "Auto Lock (Always)" then
-        shouldAim = true
-    elseif Config.AimMode == "Hold RMB" and isRMBDown then
-        shouldAim = true
-    end
-
-    if Config.AimEnabled and shouldAim then
-        local target = GetClosestTarget()
-        if target then
-            local targetPos = target.Position
-            if Config.PredictionEnabled and target.Parent then
-                local humRoot = target.Parent:FindFirstChild("HumanoidRootPart")
-                if humRoot then
-                    targetPos = targetPos + (humRoot.AssemblyLinearVelocity * 0.1)
-                end
+-- Optimized Main Loop
+local cleanTick = 0
+local function CleanInvalidCache(tbl)
+    for i = #tbl, 1, -1 do
+        local obj = tbl[i]
+        if not obj or not obj.Parent or (obj:IsA("Model") and not obj:FindFirstChildOfClass("Humanoid") and not obj.PrimaryPart) then
+            if ESPCache[obj] then
+                Disable3DESP(obj)
+                ESPCache[obj] = nil
             end
-            local currentCFrame = Camera.CFrame
-            local targetCFrame = CFrame.lookAt(currentCFrame.Position, targetPos)
-            Camera.CFrame = currentCFrame:Lerp(targetCFrame, math.clamp(Config.AimSmoothness * (dt * 60), 0.05, 1))
+            table.remove(tbl, i)
         end
     end
+end
 
-    -- Update 3D ESP render loop for Players
-    if Config.PlayerESPEnabled then
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Character then
-                local char = plr.Character
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                local mainPart = GetMainPart(char)
-                if hum and hum.Health > 0 and mainPart then
-                    local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.GlobalESPDistance then
-                        local data = Apply3DESP(char, Color3.fromRGB(255, 60, 60))
+SafeConnect(RunService.RenderStepped, function(deltaTime)
+    local camPos = Camera.CFrame.Position
+    local mouseLoc = UserInputService:GetMouseLocation()
+    deltaTime = math.clamp(deltaTime, 0.001, 0.1)
+
+    local camSize = Camera.ViewportSize
+    FOVCircle.Position = UDim2.fromOffset(camSize.X / 2, camSize.Y / 2)
+    if Config.FullBrightEnabled then
+        Lighting.Brightness = Config.FullBrightIntensity
+    end
+
+    cleanTick += deltaTime
+    if cleanTick >= 1.0 then
+        cleanTick = 0
+        CleanInvalidCache(TargetCache.Bots)
+        CleanInvalidCache(TargetCache.ItemBoxes)
+        CleanInvalidCache(TargetCache.Exits)
+        CleanInvalidCache(TargetCache.Corpses)
+    end
+
+    local function processESP(list, enabled, distLimit, color, labelPrefix, showHealth)
+        if not enabled then
+            for _, obj in ipairs(list) do Disable3DESP(obj) end
+            return
+        end
+        for _, obj in ipairs(list) do
+            if obj and obj.Parent then
+                local mainPart = GetMainPart(obj)
+                if mainPart then
+                    local dist = (mainPart.Position - camPos).Magnitude
+                    if dist <= distLimit then
+                        local data = Apply3DESP(obj, color)
                         if data and data.TagText then
-                            local heldItem = GetPlayerHeldItem(plr)
-                            data.TagText.Text = string.format("%s\n[%d studs] | Item: %s", plr.Name, math.floor(dist), heldItem)
-                            if data.HealthFrame then
-                                data.HealthFrame.Visible = true
-                                local healthPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
-                                data.HealthFill.Size = UDim2.new(healthPct, 0, 1, 0)
-                                data.HealthText.Text = math.floor(hum.Health)
+                            local textVal = labelPrefix
+                            if labelPrefix == "Bot" then
+                                textVal = GetBotName(obj)
+                            elseif labelPrefix == "Item" then
+                                textVal = GetItemName(obj) or "Item"
+                            end
+                            data.TagText.Text = string.format("%s\n%dm", textVal, math.floor(dist))
+                            
+                            if showHealth then
+                                local hum = obj:FindFirstChildOfClass("Humanoid")
+                                if hum and data.HealthFrame then
+                                    data.HealthFrame.Visible = true
+                                    local hp = math.clamp(hum.Health, 0, hum.MaxHealth)
+                                    data.HealthFill.Size = UDim2.new(hp / hum.MaxHealth, 0, 1, 0)
+                                    data.HealthText.Text = math.floor(hp) .. "HP"
+                                end
+                            elseif data.HealthFrame then
+                                data.HealthFrame.Visible = false
                             end
                         end
                     else
-                        Disable3DESP(char)
+                        Disable3DESP(obj)
                     end
-                else
-                    Disable3DESP(char)
+                end
+            end
+        end
+    end
+
+    if Config.PlayerESPEnabled then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local mainPart = GetMainPart(plr.Character)
+                if mainPart then
+                    local dist = (mainPart.Position - camPos).Magnitude
+                    if dist <= Config.PlayerESPDistance then
+                        local data = Apply3DESP(plr.Character, Color3.fromRGB(255, 80, 80))
+                        if data and data.TagText then
+                            local heldItem = GetPlayerHeldItem(plr)
+                            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+                            local hp = hum and math.floor(hum.Health) or 100
+                            data.TagText.Text = string.format("%s\nDist: %dm\nHeld: %s", plr.Name, math.floor(dist), heldItem)
+                            if data.HealthFrame then
+                                data.HealthFrame.Visible = true
+                                data.HealthFill.Size = UDim2.new(math.clamp(hp / 100, 0, 1), 0, 1, 0)
+                                data.HealthText.Text = hp .. "HP"
+                            end
+                        end
+                    else
+                        Disable3DESP(plr.Character)
+                    end
                 end
             end
         end
@@ -1016,109 +989,67 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- Update Bot ESP (Real Bot Name/DisplayName)
-    if Config.BotESPEnabled then
-        for _, bot in ipairs(TargetCache.Bots) do
-            if bot and bot.Parent then
-                local hum = bot:FindFirstChildOfClass("Humanoid")
-                local mainPart = GetMainPart(bot)
-                if hum and hum.Health > 0 and mainPart then
-                    local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.GlobalESPDistance then
-                        local data = Apply3DESP(bot, Color3.fromRGB(255, 165, 0))
-                        if data and data.TagText then
-                            local botDisplayName = (hum and hum.DisplayName ~= "" and hum.DisplayName) or bot.Name
-                            data.TagText.Text = string.format("%s\n[%d studs]", botDisplayName, math.floor(dist))
-                        end
-                    else
-                        Disable3DESP(bot)
-                    end
-                else
-                    Disable3DESP(bot)
-                end
-            end
-        end
-    else
-        for _, bot in ipairs(TargetCache.Bots) do Disable3DESP(bot) end
-    end
+    processESP(TargetCache.Bots, Config.BotESPEnabled, Config.BotESPDistance, Color3.fromRGB(255, 165, 0), "Bot", true)
+    processESP(TargetCache.ItemBoxes, Config.ItemBoxESPEnabled, Config.ItemBoxESPDistance, Color3.fromRGB(80, 255, 120), "Item", false)
+    processESP(TargetCache.Exits, Config.ExitESPEnabled, Config.ExitESPDistance, Color3.fromRGB(80, 200, 255), "Extract", false)
+    processESP(TargetCache.Corpses, Config.CorpseESPEnabled, Config.CorpseESPDistance, Color3.fromRGB(160, 160, 160), "Corpse", false)
 
-    -- Update Item Box ESP
-    if Config.ItemBoxESPEnabled then
-        for _, obj in ipairs(TargetCache.ItemBoxes) do
-            if obj and obj.Parent then
-                local mainPart = GetMainPart(obj)
-                if mainPart then
-                    local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.GlobalESPDistance then
-                        local data = Apply3DESP(obj, Color3.fromRGB(80, 220, 100))
-                        if data and data.TagText then
-                            data.TagText.Text = string.format("Item: %s [%d studs]", GetItemName(obj), math.floor(dist))
-                        end
-                    else
-                        Disable3DESP(obj)
+    if Config.AimEnabled and (Config.AimMode == "Auto Lock (Always)" or (Config.AimMode == "Hold RMB" and isRMBDown)) then
+        local targetPart = nil
+        local shortestDist = Config.FOV
+
+        local function checkTargetCandidate(model)
+            if not model or model == LocalPlayer.Character then return end
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health <= 0 then return end
+            
+            local part = model:FindFirstChild("Head") or GetMainPart(model)
+            if part then
+                if Config.WallCheckEnabled then
+                    local origin = camPos
+                    local direction = (part.Position - origin)
+                    local rayParams = RaycastParams.new()
+                    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+                    local filterList = {LocalPlayer.Character}
+                    if ScreenGui and ScreenGui.Parent then table.insert(filterList, ScreenGui) end
+                    rayParams.FilterDescendantsInstances = filterList
+                    local result = workspace:Raycast(origin, direction, rayParams)
+                    if result and result.Instance and not result.Instance:IsDescendantOf(model) then
+                        return
+                    end
+                end
+
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    local mag = (Vector2.new(screenPos.X, screenPos.Y) - mouseLoc).Magnitude
+                    if mag < shortestDist then
+                        shortestDist = mag
+                        targetPart = part
                     end
                 end
             end
         end
-    else
-        for _, obj in ipairs(TargetCache.ItemBoxes) do Disable3DESP(obj) end
-    end
 
-    -- Update Exit ESP
-    if Config.ExitESPEnabled then
-        for _, obj in ipairs(TargetCache.Exits) do
-            if obj and obj.Parent then
-                local mainPart = GetMainPart(obj)
-                if mainPart then
-                    local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.GlobalESPDistance then
-                        local data = Apply3DESP(obj, Color3.fromRGB(80, 180, 255))
-                        if data and data.TagText then
-                            data.TagText.Text = string.format("Exit [%d studs]", math.floor(dist))
-                        end
-                    else
-                        Disable3DESP(obj)
-                    end
-                end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                checkTargetCandidate(plr.Character)
             end
         end
-    else
-        for _, obj in ipairs(TargetCache.Exits) do Disable3DESP(obj) end
-    end
-
-    -- Update Corpse ESP
-    if Config.CorpseESPEnabled then
-        for _, obj in ipairs(TargetCache.Corpses) do
-            if obj and obj.Parent then
-                local mainPart = GetMainPart(obj)
-                if mainPart then
-                    local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.GlobalESPDistance then
-                        local data = Apply3DESP(obj, Color3.fromRGB(150, 150, 150))
-                        if data and data.TagText then
-                            data.TagText.Text = string.format("Corpse [%d studs]", math.floor(dist))
-                        end
-                    else
-                        Disable3DESP(obj)
-                    end
-                end
+        if Config.BotLockEnabled then
+            for _, bot in ipairs(TargetCache.Bots) do
+                checkTargetCandidate(bot)
             end
         end
-    else
-        for _, obj in ipairs(TargetCache.Corpses) do Disable3DESP(obj) end
-    end
-end))
 
--- Handle tool modification / NoRecoil runtime injection loop hook
-table.insert(Connections, RunService.Stepped:Connect(function()
-    if Config.NoRecoilEnabled and LocalPlayer.Character then
-        for _, child in ipairs(LocalPlayer.Character:GetDescendants()) do
-            if child:IsA("NumberValue") or child:IsA("Vector3Value") then
-                local lowerName = child.Name:lower()
-                if lowerName:find("recoil") or lowerName:find("spread") or lowerName:find("kick") then
-                    child.Value = 0
-                end
+        if targetPart then
+            local predPos = targetPart.Position
+            if Config.PredictionEnabled and targetPart.AssemblyLinearVelocity then
+                predPos = predPos + (targetPart.AssemblyLinearVelocity * 0.08)
             end
+
+            local goalCFrame = CFrame.new(Camera.CFrame.Position, predPos)
+            local smoothness = math.clamp(Config.AimSmoothness, 0.02, 1)
+            Camera.CFrame = Camera.CFrame:Lerp(goalCFrame, 1 - math.pow(smoothness, 0.5))
         end
     end
-end))
+end)
