@@ -9,7 +9,10 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
 local ToggleKeybind = Enum.KeyCode.RightShift
+local AimModeKeybind = Enum.KeyCode.E
 local isListeningForKey = false
+local isListeningForAimKey = false
+local isRMBDown = false
 
 local ContainerParent
 pcall(function()
@@ -28,6 +31,7 @@ end
 
 local DefaultConfig = {
     AimEnabled = true,
+    AimMode = "Hold RMB",
     BotLockEnabled = true,
     WallCheckEnabled = false,
     PredictionEnabled = true,
@@ -37,6 +41,7 @@ local DefaultConfig = {
     FireRateEnabled = false,
     FireRateMultiplier = 1.5,
     ToggleKeybindName = "RightShift",
+    AimModeKeybindName = "E",
     
     PlayerESPEnabled = true,
     BotESPEnabled = true,
@@ -47,6 +52,9 @@ local DefaultConfig = {
     FullBrightIntensity = 3.0,
     ShowFOVCircle = true,
     
+    ESPTextSize = 14, -- ขนาดตัวหนังสือ ESP
+    UITextSize = 13,   -- ขนาดตัวหนังสือ UI เมนู
+
     FOV = 300,
     PlayerESPDistance = 5000,
     BotESPDistance = 5000,
@@ -59,8 +67,10 @@ local Config = {}
 for k, v in pairs(DefaultConfig) do Config[k] = v end
 
 local ConfigFileName = "REDJOHN_HUB_Config.json"
-local UI_Elements = { Toggles = {}, Sliders = {} }
+local UI_Elements = { Toggles = {}, Sliders = {}, Buttons = {} }
+local DynamicUITexts = {}
 local KeybindButtonRef = nil
+local AimKeybindButtonRef = nil
 
 local Connections = {}
 
@@ -80,13 +90,13 @@ local TargetCache = {
     Corpses = {}
 }
 
-local PlayerDataCache = {}
 local ESPCache = {}
 
 local function SaveConfig()
     pcall(function()
         if writefile then
             Config.ToggleKeybindName = ToggleKeybind.Name
+            Config.AimModeKeybindName = AimModeKeybind.Name
             local data = HttpService:JSONEncode(Config)
             writefile(ConfigFileName, data)
         end
@@ -110,7 +120,18 @@ local function LoadConfig()
                     if successKey and keyCode then
                         ToggleKeybind = keyCode
                         if KeybindButtonRef then
-                            KeybindButtonRef.Text = "Key: " .. tostring(ToggleKeybind.Name)
+                            KeybindButtonRef.Text = "UI Key: " .. tostring(ToggleKeybind.Name)
+                        end
+                    end
+                end
+                if Config.AimModeKeybindName then
+                    local successKey, keyCode = pcall(function()
+                        return Enum.KeyCode[Config.AimModeKeybindName]
+                    end)
+                    if successKey and keyCode then
+                        AimModeKeybind = keyCode
+                        if AimKeybindButtonRef then
+                            AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimModeKeybind.Name)
                         end
                     end
                 end
@@ -129,12 +150,24 @@ local function DeleteConfig()
         Config[k] = v 
     end
     ToggleKeybind = Enum.KeyCode.RightShift
+    AimModeKeybind = Enum.KeyCode.E
     if KeybindButtonRef then
-        KeybindButtonRef.Text = "Key: " .. tostring(ToggleKeybind.Name)
+        KeybindButtonRef.Text = "UI Key: " .. tostring(ToggleKeybind.Name)
+    end
+    if AimKeybindButtonRef then
+        AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimModeKeybind.Name)
     end
 end
 
 LoadConfig()
+
+local function UpdateAllUITextSizes(size)
+    for _, obj in ipairs(DynamicUITexts) do
+        if obj and obj.Parent then
+            obj.TextSize = size
+        end
+    end
+end
 
 local function ApplyFullBright()
     pcall(function()
@@ -188,7 +221,7 @@ local function GetMainPart(model)
 end
 
 local function GetItemName(obj)
-    if not obj then return "None" end
+    if not obj then return nil end
     if obj:FindFirstChild("ItemName") and obj.ItemName:IsA("StringValue") then
         return obj.ItemName.Value
     elseif obj:GetAttribute("ItemName") then
@@ -196,85 +229,65 @@ local function GetItemName(obj)
     elseif obj:GetAttribute("Name") then
         return tostring(obj:GetAttribute("Name"))
     end
-    
-    local tool = obj:FindFirstChildOfClass("Tool")
-    if tool then
-        return tool.Name
-    end
     return obj.Name
 end
 
-local function GetEquipmentNameFromSlot(container, slotName)
-    for _, desc in ipairs(container:GetDescendants()) do
-        if desc.Name:upper() == slotName then
-            local val = desc:FindFirstChildOfClass("StringValue") or desc:FindFirstChild("ItemName")
-            if val and val:IsA("StringValue") and val.Value ~= "" then
-                return val.Value
-            end
-            
-            local childItem = desc:FindFirstChildOfClass("Model") or desc:FindFirstChildOfClass("Tool") or desc:FindFirstChildOfClass("Folder")
-            if childItem then
-                return GetItemName(childItem)
-            end
+local function GetPlayerHeldItem(player)
+    if not player then return "Nothing" end
+    local itemsFound = {}
+    local addedNames = {}
 
-            if desc:GetAttribute("ItemName") then
-                return tostring(desc:GetAttribute("ItemName"))
-            elseif desc:GetAttribute("Equipped") then
-                return tostring(desc:GetAttribute("Equipped"))
+    local function addItem(name)
+        if name and name ~= "" and not addedNames[name] then
+            addedNames[name] = true
+            table.insert(itemsFound, name)
+        end
+    end
+
+    local backpack = player:FindFirstChildOfClass("Backpack") or player:FindFirstChild("Backpack") or player:FindFirstChild("Inventory")
+    if backpack then
+        for _, item in ipairs(backpack:GetChildren()) do
+            local itemName = GetItemName(item) or item.Name
+            addItem(itemName)
+        end
+    end
+
+    local char = player.Character
+    if char then
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("Tool") then
+                addItem(GetItemName(child) or child.Name)
+            elseif child:IsA("Model") and not child:FindFirstChildOfClass("Humanoid") then
+                if not (child:IsA("Accessory") or child:IsA("Hat") or child:IsA("Clothing") or child:IsA("ShirtGraphic")) then
+                    local childName = child.Name:lower()
+                    local isClothing = childName:find("shirt") or childName:find("pants") or childName:find("vest") 
+                                    or childName:find("armor") or childName:find("helmet") or childName:find("cloth") 
+                                    or childName:find("bag") or childName:find("backpack") or childName:find("suit")
+                    if not isClothing then
+                        addItem(GetItemName(child) or child.Name)
+                    end
+                end
+            end
+        end
+
+        local inventoryFolder = char:FindFirstChild("Inventory") or char:FindFirstChild("Weapons") or char:FindFirstChild("Slots")
+        if inventoryFolder then
+            for _, val in ipairs(inventoryFolder:GetChildren()) do
+                if val:IsA("StringValue") and val.Value ~= "" then
+                    addItem(val.Value)
+                elseif val:IsA("ObjectValue") and val.Value then
+                    addItem(val.Value.Name)
+                end
             end
         end
     end
-    return nil
+
+    if #itemsFound > 0 then
+        return table.concat(itemsFound, ", ")
+    end
+
+    return "Nothing"
 end
-
-local function UpdatePlayerCache(player)
-    if not player then 
-        PlayerDataCache[player] = nil
-        return 
-    end
-    
-    local helmetName = "None"
-    local chestRigName = "None"
-    local weaponName = "None"
-    local char = player.Character
-
-    if char then
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool then weaponName = tool.Name end
-    end
-
-    local searchContainers = {}
-    if char then table.insert(searchContainers, char) end
-    table.insert(searchContainers, player)
-
-    for _, container in ipairs(searchContainers) do
-        local h = GetEquipmentNameFromSlot(container, "HELMET")
-        if h then helmetName = h end
-        
-        local c = GetEquipmentNameFromSlot(container, "CHESTRIG")
-        if c then chestRigName = c end
-    end
-
-    PlayerDataCache[player] = {
-        Equipment = string.format("H: %s | C: %s", helmetName, chestRigName),
-        Weapon = weaponName
-    }
-end
-
-local function SetupPlayerCacheListener(player)
-    local function onCharacterAdded(char)
-        UpdatePlayerCache(player)
-        table.insert(Connections, char.ChildAdded:Connect(function() task.defer(function() UpdatePlayerCache(player) end) end))
-        table.insert(Connections, char.ChildRemoved:Connect(function() task.defer(function() UpdatePlayerCache(player) end) end))
-    end
-
-    if player.Character then onCharacterAdded(player.Character) end
-    table.insert(Connections, player.CharacterAdded:Connect(onCharacterAdded))
-end
-
-for _, plr in ipairs(Players:GetPlayers()) do SetupPlayerCacheListener(plr) end
-table.insert(Connections, Players.PlayerAdded:Connect(SetupPlayerCacheListener))
-table.insert(Connections, Players.PlayerRemoving:Connect(function(plr) PlayerDataCache[plr] = nil end))
 
 local function Apply3DESP(model, color)
     if not model then return nil end
@@ -296,7 +309,7 @@ local function Apply3DESP(model, color)
         if mainPart then
             bb = Instance.new("BillboardGui")
             bb.Name = "REDJOHN_3DTag"
-            bb.Size = UDim2.fromOffset(250, 60)
+            bb.Size = UDim2.fromOffset(300, 70)
             bb.StudsOffset = Vector3.new(0, 3, 0)
             bb.AlwaysOnTop = true
 
@@ -305,7 +318,7 @@ local function Apply3DESP(model, color)
             tagText.Size = UDim2.new(1, 0, 1, 0)
             tagText.BackgroundTransparency = 1
             tagText.TextStrokeTransparency = 0.3
-            tagText.TextSize = 12
+            tagText.TextSize = Config.ESPTextSize
             tagText.Font = Enum.Font.GothamBold
             bb.Parent = mainPart
         end
@@ -325,6 +338,7 @@ local function Apply3DESP(model, color)
     if data.Billboard then
         data.Billboard.Enabled = true
         data.TagText.TextColor3 = color
+        data.TagText.TextSize = Config.ESPTextSize
     end
 
     return data.TagText
@@ -399,12 +413,28 @@ table.insert(Connections, workspace.DescendantAdded:Connect(function(child)
 end))
 
 table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        isRMBDown = true
+    end
+
     if isListeningForKey then
         if input.UserInputType == Enum.UserInputType.Keyboard then
             ToggleKeybind = input.KeyCode
             isListeningForKey = false
             if KeybindButtonRef then
-                KeybindButtonRef.Text = "Key: " .. tostring(ToggleKeybind.Name)
+                KeybindButtonRef.Text = "UI Key: " .. tostring(ToggleKeybind.Name)
+            end
+            SaveConfig()
+        end
+        return
+    end
+
+    if isListeningForAimKey then
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            AimModeKeybind = input.KeyCode
+            isListeningForAimKey = false
+            if AimKeybindButtonRef then
+                AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimModeKeybind.Name)
             end
             SaveConfig()
         end
@@ -413,6 +443,22 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, ga
 
     if input.KeyCode == ToggleKeybind then
         ScreenGui.Enabled = not ScreenGui.Enabled
+    elseif input.KeyCode == AimModeKeybind then
+        if Config.AimMode == "Hold RMB" then
+            Config.AimMode = "Auto Lock (Always)"
+        else
+            Config.AimMode = "Hold RMB"
+        end
+        if UI_Elements.Buttons["AimModeBtn"] then
+            UI_Elements.Buttons["AimModeBtn"].Text = "Aim Mode: " .. Config.AimMode
+        end
+        SaveConfig()
+    end
+end))
+
+table.insert(Connections, UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        isRMBDown = false
     end
 end))
 
@@ -528,7 +574,7 @@ Header.ClipsDescendants = true
 Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 16)
 
 local Title = Instance.new("TextLabel", Header)
-Title.Size = UDim2.new(1, -260, 1, 0)
+Title.Size = UDim2.new(1, -380, 1, 0)
 Title.Position = UDim2.fromOffset(24, 0)
 Title.BackgroundTransparency = 1
 Title.Text = "REDJOHN_HUB V2"
@@ -539,9 +585,9 @@ Title.TextXAlignment = Enum.TextXAlignment.Left
 
 local KeybindButton = Instance.new("TextButton", Header)
 KeybindButton.Size = UDim2.fromOffset(110, 36)
-KeybindButton.Position = UDim2.new(1, -200, 0.5, -18)
+KeybindButton.Position = UDim2.new(1, -310, 0.5, -18)
 KeybindButton.BackgroundColor3 = Card_BG
-KeybindButton.Text = "Key: " .. tostring(ToggleKeybind.Name)
+KeybindButton.Text = "UI Key: " .. tostring(ToggleKeybind.Name)
 KeybindButton.TextColor3 = Text_Main
 KeybindButton.TextSize = 11
 KeybindButton.Font = Enum.Font.GothamMedium
@@ -551,6 +597,22 @@ KeybindButtonRef = KeybindButton
 KeybindButton.MouseButton1Click:Connect(function()
     isListeningForKey = true
     KeybindButton.Text = "Press Key..."
+end)
+
+local AimKeybindButton = Instance.new("TextButton", Header)
+AimKeybindButton.Size = UDim2.fromOffset(110, 36)
+AimKeybindButton.Position = UDim2.new(1, -195, 0.5, -18)
+AimKeybindButton.BackgroundColor3 = Card_BG
+AimKeybindButton.Text = "Mode Key: " .. tostring(AimModeKeybind.Name)
+AimKeybindButton.TextColor3 = Text_Main
+AimKeybindButton.TextSize = 11
+AimKeybindButton.Font = Enum.Font.GothamMedium
+Instance.new("UICorner", AimKeybindButton).CornerRadius = UDim.new(0, 10)
+AimKeybindButtonRef = AimKeybindButton
+
+AimKeybindButton.MouseButton1Click:Connect(function()
+    isListeningForAimKey = true
+    AimKeybindButton.Text = "Press Key..."
 end)
 
 local Minimize = Instance.new("TextButton", Header)
@@ -647,8 +709,9 @@ local function CreateToggle(text, idKey, parent, callback)
     label.Text = text
     label.TextColor3 = Text_Main    
     label.Font = Enum.Font.GothamMedium
-    label.TextSize = 13
+    label.TextSize = Config.UITextSize
     label.TextXAlignment = Enum.TextXAlignment.Left
+    table.insert(DynamicUITexts, label)
 
     local switchBg = Instance.new("Frame", btn)
     switchBg.Size = UDim2.fromOffset(42, 22)
@@ -690,6 +753,33 @@ local function CreateToggle(text, idKey, parent, callback)
     SetState(Config[idKey])
 end
 
+local function CreateModeButton(parent)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size = UDim2.new(1, 0, 0, 44)
+    btn.BackgroundColor3 = Card_BG
+    btn.Text = "Aim Mode: " .. Config.AimMode
+    btn.TextColor3 = Text_Main
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = Config.UITextSize
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.Thickness = 1
+    stroke.Color = Stroke_Color
+    table.insert(DynamicUITexts, btn)
+
+    btn.MouseButton1Click:Connect(function()
+        if Config.AimMode == "Hold RMB" then
+            Config.AimMode = "Auto Lock (Always)"
+        else
+            Config.AimMode = "Hold RMB"
+        end
+        btn.Text = "Aim Mode: " .. Config.AimMode
+        SaveConfig()
+    end)
+    
+    UI_Elements.Buttons["AimModeBtn"] = btn
+end
+
 local function CreateSlider(title, minVal, maxVal, idKey, isFloat, parent, callback)
     local frame = Instance.new("Frame", parent)
     frame.Size = UDim2.new(1, 0, 0, 52)
@@ -704,9 +794,10 @@ local function CreateSlider(title, minVal, maxVal, idKey, isFloat, parent, callb
     label.Position = UDim2.fromOffset(16, 8)
     label.BackgroundTransparency = 1
     label.TextColor3 = Text_Main
-    label.TextSize = 13
+    label.TextSize = Config.UITextSize
     label.Font = Enum.Font.GothamBold
     label.TextXAlignment = Enum.TextXAlignment.Left
+    table.insert(DynamicUITexts, label)
 
     local sliderBar = Instance.new("Frame", frame)
     sliderBar.Size = UDim2.new(1, -32, 0, 6)
@@ -755,7 +846,9 @@ local function CreateSlider(title, minVal, maxVal, idKey, isFloat, parent, callb
     SetValue(Config[idKey])
 end
 
-CreateToggle("Aim Lock", "AimEnabled", LeftCol)
+-- สร้าง UI Elements ฝั่งซ้าย
+CreateToggle("Aim Lock Enabled", "AimEnabled", LeftCol)
+CreateModeButton(LeftCol)
 CreateToggle("Bot Lock", "BotLockEnabled", LeftCol)
 CreateToggle("Wall Check", "WallCheckEnabled", LeftCol)
 CreateToggle("Prediction", "PredictionEnabled", LeftCol)
@@ -767,6 +860,7 @@ CreateToggle("No Recoil", "NoRecoilEnabled", LeftCol)
 CreateToggle("Safe Fire Rate Booster", "FireRateEnabled", LeftCol)
 CreateSlider("Fire Rate Boost", 1.0, 3.0, "FireRateMultiplier", true, LeftCol)
 
+-- สร้าง UI Elements ฝั่งขวา
 CreateToggle("ESP Player", "PlayerESPEnabled", RightCol)
 CreateSlider("Player Distance", 100, 10000, "PlayerESPDistance", false, RightCol)
 
@@ -781,6 +875,19 @@ CreateSlider("Safezone Distance", 100, 10000, "ExitESPDistance", false, RightCol
 
 CreateToggle("Corpse ESP", "CorpseESPEnabled", RightCol)
 CreateSlider("Corpse Distance", 50, 10000, "CorpseESPDistance", false, RightCol)
+
+-- สไลเดอร์ปรับขนาดตัวหนังสือ (ESP & UI Text Size)
+CreateSlider("ESP Text Size", 8, 24, "ESPTextSize", false, RightCol, function(v)
+    for _, data in pairs(ESPCache) do
+        if data.TagText then
+            data.TagText.TextSize = v
+        end
+    end
+end)
+
+CreateSlider("UI Text Size", 10, 18, "UITextSize", false, RightCol, function(v)
+    UpdateAllUITextSizes(v)
+end)
 
 CreateToggle("Full Bright", "FullBrightEnabled", RightCol, function(v) 
     ApplyFullBright()
@@ -821,6 +928,10 @@ Instance.new("UICorner", DeleteBtn).CornerRadius = UDim.new(0, 10)
 local function RefreshUI()
     for k, setFunc in pairs(UI_Elements.Toggles) do setFunc(Config[k]) end
     for k, setFunc in pairs(UI_Elements.Sliders) do setFunc(Config[k]) end
+    if UI_Elements.Buttons["AimModeBtn"] then
+        UI_Elements.Buttons["AimModeBtn"].Text = "Aim Mode: " .. Config.AimMode
+    end
+    UpdateAllUITextSizes(Config.UITextSize)
     ApplyFullBright()
 end
 
@@ -849,8 +960,8 @@ end)
 
 RefreshUI()
 
--- Main Loop
-table.insert(Connections, RunService.RenderStepped:Connect(function()
+-- Loop หลัก RenderStepped
+table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
     local camPos = Camera.CFrame.Position
     local mousePos = UserInputService:GetMouseLocation()
     
@@ -872,22 +983,32 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         end
     end
 
-    local targetPart = GetClosestTarget()
-    if targetPart then
-        local targetPos = targetPart.Position
-        if Config.PredictionEnabled and targetPart.Parent and targetPart.Parent:FindFirstChild("HumanoidRootPart") then
-            local vel = targetPart.Parent.HumanoidRootPart.AssemblyLinearVelocity
-            targetPos = targetPos + (vel * 0.033)
+    local shouldAim = false
+    if Config.AimEnabled then
+        if Config.AimMode == "Auto Lock (Always)" then
+            shouldAim = true
+        elseif Config.AimMode == "Hold RMB" and isRMBDown then
+            shouldAim = true
         end
-
-        local currentCF = Camera.CFrame
-        local targetCF = CFrame.new(currentCF.Position, targetPos)
-        
-        local alpha = math.clamp(1 - Config.AimSmoothness, 0.01, 1.0)
-        Camera.CFrame = currentCF:Lerp(targetCF, alpha)
     end
 
-    -- 3D ESP Player Loop Handling (แสดงเฉพาะ ชื่อผู้ใช้ + ระยะ + ของที่ถือในมือ)
+    if shouldAim then
+        local targetPart = GetClosestTarget()
+        if targetPart then
+            local targetPos = targetPart.Position
+            if Config.PredictionEnabled and targetPart.Parent and targetPart.Parent:FindFirstChild("HumanoidRootPart") then
+                local vel = targetPart.Parent.HumanoidRootPart.AssemblyLinearVelocity
+                targetPos = targetPos + (vel * 0.033)
+            end
+
+            local currentCF = Camera.CFrame
+            local targetCF = CFrame.new(currentCF.Position, targetPos)
+            
+            local lerpFactor = math.clamp((1 - Config.AimSmoothness) * (dt * 60), 0.01, 1.0)
+            Camera.CFrame = currentCF:Lerp(targetCF, lerpFactor)
+        end
+    end
+
     if Config.PlayerESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
@@ -900,9 +1021,8 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                     if dist <= Config.PlayerESPDistance then
                         local tagText = Apply3DESP(char, Color3.fromRGB(255, 60, 60))
                         if tagText then
-                            local heldTool = char:FindFirstChildOfClass("Tool")
-                            local weaponName = heldTool and heldTool.Name or "None"
-                            tagText.Text = string.format("%s [%dm]\nWep: %s", plr.DisplayName, dist, weaponName)
+                            local heldItem = GetPlayerHeldItem(plr)
+                            tagText.Text = string.format("%s [%dm]\nItems: %s", plr.DisplayName, dist, heldItem)
                         end
                     else
                         Disable3DESP(char)
@@ -914,7 +1034,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- 3D ESP Bot Loop Handling (แสดงชื่อตัวละคร Bot + ระยะ)
     if Config.BotESPEnabled then
         for i = #TargetCache.Bots, 1, -1 do
             local bot = TargetCache.Bots[i]
@@ -926,8 +1045,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                     if dist <= Config.BotESPDistance then
                         local tagText = Apply3DESP(bot, Color3.fromRGB(255, 170, 0))
                         if tagText then
-                            local botName = bot.Name
-                            tagText.Text = string.format("[BOT] %s [%dm]", botName, dist)
+                            tagText.Text = string.format("[BOT] %s [%dm]", bot.Name, dist)
                         end
                     else
                         Disable3DESP(bot)
@@ -941,7 +1059,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Item Box ESP Loop
     if Config.ItemBoxESPEnabled then
         for i = #TargetCache.ItemBoxes, 1, -1 do
             local obj = TargetCache.ItemBoxes[i]
@@ -952,7 +1069,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                     if dist <= Config.ItemBoxESPDistance then
                         local tagText = Apply3DESP(obj, Color3.fromRGB(0, 230, 255))
                         if tagText then
-                            tagText.Text = string.format("%s [%dm]", GetItemName(obj), dist)
+                            tagText.Text = string.format("%s [%dm]", GetItemName(obj) or obj.Name, dist)
                         end
                     else
                         Disable3DESP(obj)
@@ -964,7 +1081,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Exit/Extract ESP Loop
     if Config.ExitESPEnabled then
         for i = #TargetCache.Exits, 1, -1 do
             local obj = TargetCache.Exits[i]
@@ -987,7 +1103,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Corpse ESP Loop
     if Config.CorpseESPEnabled then
         for i = #TargetCache.Corpses, 1, -1 do
             local obj = TargetCache.Corpses[i]
@@ -1008,9 +1123,5 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                 table.remove(TargetCache.Corpses, i)
             end
         end
-    end
-end))
-    else
-        for _, obj in ipairs(TargetCache.Corpses) do Disable3DESP(obj) end
     end
 end))
