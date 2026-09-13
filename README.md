@@ -56,6 +56,7 @@ local DefaultConfig = {
     UITextSize = 13,
 
     FOV = 300,
+    GlobalESPDistance = 5000,
     PlayerESPDistance = 5000,
     BotESPDistance = 5000,
     ItemBoxESPDistance = 5000,
@@ -155,7 +156,7 @@ local function DeleteConfig()
         KeybindButtonRef.Text = "UI Key: " .. tostring(ToggleKeybind.Name)
     end
     if AimKeybindButtonRef then
-        AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimModeKeybind.Name)
+        AimKeybindButtonRef.Text = "Mode Key: " .. tostring(AimKeybindButton.Name)
     end
 end
 
@@ -931,6 +932,13 @@ CreateToggle("Bot ESP", "BotESPEnabled", RightCol)
 CreateToggle("Item Box ESP", "ItemBoxESPEnabled", RightCol)
 CreateToggle("Exit ESP", "ExitESPEnabled", RightCol)
 CreateToggle("Corpse ESP", "CorpseESPEnabled", RightCol)
+CreateSlider("Global ESP Distance", 100, 10000, "GlobalESPDistance", false, RightCol, function(val)
+    Config.PlayerESPDistance = val
+    Config.BotESPDistance = val
+    Config.ItemBoxESPDistance = val
+    Config.ExitESPDistance = val
+    Config.CorpseESPDistance = val
+end)
 CreateSlider("UI / ESP Text Size", 9, 24, "ESPTextSize", false, RightCol, function(val)
     Config.UITextSize = val
     UpdateAllUITextSizes(val)
@@ -982,7 +990,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 local mainPart = GetMainPart(char)
                 if hum and hum.Health > 0 and mainPart then
                     local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.PlayerESPDistance then
+                    if dist <= Config.GlobalESPDistance then
                         local data = Apply3DESP(char, Color3.fromRGB(255, 60, 60))
                         if data and data.TagText then
                             local heldItem = GetPlayerHeldItem(plr)
@@ -1016,7 +1024,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 local mainPart = GetMainPart(bot)
                 if hum and hum.Health > 0 and mainPart then
                     local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.BotESPDistance then
+                    if dist <= Config.GlobalESPDistance then
                         local data = Apply3DESP(bot, Color3.fromRGB(255, 165, 0))
                         if data and data.TagText then
                             local botDisplayName = (hum and hum.DisplayName ~= "" and hum.DisplayName) or bot.Name
@@ -1041,7 +1049,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 local mainPart = GetMainPart(obj)
                 if mainPart then
                     local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.ItemBoxESPDistance then
+                    if dist <= Config.GlobalESPDistance then
                         local data = Apply3DESP(obj, Color3.fromRGB(80, 220, 100))
                         if data and data.TagText then
                             data.TagText.Text = string.format("Item: %s [%d studs]", GetItemName(obj), math.floor(dist))
@@ -1063,7 +1071,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 local mainPart = GetMainPart(obj)
                 if mainPart then
                     local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.ExitESPDistance then
+                    if dist <= Config.GlobalESPDistance then
                         local data = Apply3DESP(obj, Color3.fromRGB(80, 180, 255))
                         if data and data.TagText then
                             data.TagText.Text = string.format("Exit [%d studs]", math.floor(dist))
@@ -1085,7 +1093,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(dt)
                 local mainPart = GetMainPart(obj)
                 if mainPart then
                     local dist = (mainPart.Position - Camera.CFrame.Position).Magnitude
-                    if dist <= Config.CorpseESPDistance then
+                    if dist <= Config.GlobalESPDistance then
                         local data = Apply3DESP(obj, Color3.fromRGB(150, 150, 150))
                         if data and data.TagText then
                             data.TagText.Text = string.format("Corpse [%d studs]", math.floor(dist))
