@@ -887,70 +887,72 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
         Camera.CFrame = currentCF:Lerp(targetCF, alpha)
     end
 
-    -- 3D ESP Player Loop Handling
+    -- 3D ESP Player Loop Handling (แสดงเฉพาะ ชื่อผู้ใช้ + ระยะ + ของที่ถือในมือ)
     if Config.PlayerESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
                 local char = plr.Character
                 local mainPart = GetMainPart(char)
-                if mainPart then
-                    local dist = (camPos - mainPart.Position).Magnitude
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                
+                if mainPart and hum and hum.Health > 0 then
+                    local dist = math.floor((mainPart.Position - camPos).Magnitude)
                     if dist <= Config.PlayerESPDistance then
-                        local tagText = Apply3DESP(char, Color3.fromRGB(0, 170, 255))
+                        local tagText = Apply3DESP(char, Color3.fromRGB(255, 60, 60))
                         if tagText then
-                            local data = PlayerDataCache[plr]
-                            local infoStr = data and (data.Equipment .. "\n" .. data.Weapon) or ""
-                            tagText.Text = string.format("%s\n[%d m]\n%s", plr.Name, math.floor(dist), infoStr)
+                            local heldTool = char:FindFirstChildOfClass("Tool")
+                            local weaponName = heldTool and heldTool.Name or "None"
+                            tagText.Text = string.format("%s [%dm]\nWep: %s", plr.DisplayName, dist, weaponName)
                         end
                     else
                         Disable3DESP(char)
                     end
+                else
+                    Disable3DESP(char)
                 end
             end
         end
-    else
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr.Character then Disable3DESP(plr.Character) end
-        end
     end
 
-    -- Bot ESP Loop
+    -- 3D ESP Bot Loop Handling (แสดงชื่อตัวละคร Bot + ระยะ)
     if Config.BotESPEnabled then
         for i = #TargetCache.Bots, 1, -1 do
             local bot = TargetCache.Bots[i]
             if bot and bot.Parent then
                 local mainPart = GetMainPart(bot)
-                if mainPart then
-                    local dist = (camPos - mainPart.Position).Magnitude
+                local hum = bot:FindFirstChildOfClass("Humanoid")
+                if mainPart and hum and hum.Health > 0 then
+                    local dist = math.floor((mainPart.Position - camPos).Magnitude)
                     if dist <= Config.BotESPDistance then
-                        local tagText = Apply3DESP(bot, Color3.fromRGB(255, 50, 50))
+                        local tagText = Apply3DESP(bot, Color3.fromRGB(255, 170, 0))
                         if tagText then
-                            tagText.Text = string.format("Bot\n[%d m]", math.floor(dist))
+                            local botName = bot.Name
+                            tagText.Text = string.format("[BOT] %s [%dm]", botName, dist)
                         end
                     else
                         Disable3DESP(bot)
                     end
+                else
+                    Disable3DESP(bot)
                 end
             else
                 table.remove(TargetCache.Bots, i)
             end
         end
-    else
-        for _, bot in ipairs(TargetCache.Bots) do Disable3DESP(bot) end
     end
 
-    -- Item & Box ESP Loop
+    -- Item Box ESP Loop
     if Config.ItemBoxESPEnabled then
         for i = #TargetCache.ItemBoxes, 1, -1 do
             local obj = TargetCache.ItemBoxes[i]
             if obj and obj.Parent then
                 local mainPart = GetMainPart(obj)
                 if mainPart then
-                    local dist = (camPos - mainPart.Position).Magnitude
+                    local dist = math.floor((mainPart.Position - camPos).Magnitude)
                     if dist <= Config.ItemBoxESPDistance then
-                        local tagText = Apply3DESP(obj, Color3.fromRGB(255, 200, 0))
+                        local tagText = Apply3DESP(obj, Color3.fromRGB(0, 230, 255))
                         if tagText then
-                            tagText.Text = string.format("%s\n[%d m]", GetItemName(obj), math.floor(dist))
+                            tagText.Text = string.format("%s [%dm]", GetItemName(obj), dist)
                         end
                     else
                         Disable3DESP(obj)
@@ -960,22 +962,20 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                 table.remove(TargetCache.ItemBoxes, i)
             end
         end
-    else
-        for _, obj in ipairs(TargetCache.ItemBoxes) do Disable3DESP(obj) end
     end
 
-    -- Exit ESP Loop
+    -- Exit/Extract ESP Loop
     if Config.ExitESPEnabled then
         for i = #TargetCache.Exits, 1, -1 do
             local obj = TargetCache.Exits[i]
             if obj and obj.Parent then
                 local mainPart = GetMainPart(obj)
                 if mainPart then
-                    local dist = (camPos - mainPart.Position).Magnitude
+                    local dist = math.floor((mainPart.Position - camPos).Magnitude)
                     if dist <= Config.ExitESPDistance then
-                        local tagText = Apply3DESP(obj, Color3.fromRGB(0, 255, 100))
+                        local tagText = Apply3DESP(obj, Color3.fromRGB(50, 255, 100))
                         if tagText then
-                            tagText.Text = string.format("Extract: %s\n[%d m]", obj.Name, math.floor(dist))
+                            tagText.Text = string.format("[EXTRACT] %s [%dm]", obj.Name, dist)
                         end
                     else
                         Disable3DESP(obj)
@@ -985,8 +985,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                 table.remove(TargetCache.Exits, i)
             end
         end
-    else
-        for _, obj in ipairs(TargetCache.Exits) do Disable3DESP(obj) end
     end
 
     -- Corpse ESP Loop
@@ -996,11 +994,11 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
             if obj and obj.Parent then
                 local mainPart = GetMainPart(obj)
                 if mainPart then
-                    local dist = (camPos - mainPart.Position).Magnitude
+                    local dist = math.floor((mainPart.Position - camPos).Magnitude)
                     if dist <= Config.CorpseESPDistance then
                         local tagText = Apply3DESP(obj, Color3.fromRGB(150, 150, 150))
                         if tagText then
-                            tagText.Text = string.format("Corpse\n[%d m]", math.floor(dist))
+                            tagText.Text = string.format("[CORPSE] %s [%dm]", obj.Name, dist)
                         end
                     else
                         Disable3DESP(obj)
@@ -1010,6 +1008,8 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
                 table.remove(TargetCache.Corpses, i)
             end
         end
+    end
+end))
     else
         for _, obj in ipairs(TargetCache.Corpses) do Disable3DESP(obj) end
     end
